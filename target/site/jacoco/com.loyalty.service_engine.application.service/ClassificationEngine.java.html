@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClassificationEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">ClassificationEngine.java</span></div><h1>ClassificationEngine.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import com.loyalty.service_engine.application.dto.ClassifyRequestV1;
+import com.loyalty.service_engine.application.dto.ClassifyResponseV1;
+import com.loyalty.service_engine.domain.entity.ClassificationRuleReplicaEntity;
+import com.loyalty.service_engine.domain.entity.CustomerTierReplicaEntity;
+import com.loyalty.service_engine.domain.repository.ClassificationRuleReplicaRepository;
+import com.loyalty.service_engine.domain.repository.CustomerTierReplicaRepository;
+import com.loyalty.service_engine.infrastructure.exception.ServiceUnavailableException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Classification Engine — DETERMINISTIC classification logic.
+ * 
+ * Adapter service that integrates FidelityClassificationService with legacy DiscountCalculationServiceV2.
+ * This service ensures backward compatibility while delegating to the new JSONB-based classification.
+ * 
+ * Algorithm (3 paths):
+ * 1. Evaluate ALL active rules against payload metrics using JSONB logic_conditions
+ * 2. Find ALL matching rules
+ * 3. If multiple tiers match → select HIGHEST tier level (Platino &gt; Oro &gt; Plata &gt; Bronce)
+ * 4. Return single tier OR null (no match)
+ * 
+ * Heavy lifting: in-memory Caffeine cache. Fallback: read from replica tables.
+ */
+@Service
+<span class="fc" id="L37">@Slf4j</span>
+@RequiredArgsConstructor
+public class ClassificationEngine {
+
+    private final FidelityClassificationService fidelityClassificationService;
+    private final ClassificationMatrixCaffeineCacheService cacheService;
+    private final CustomerTierReplicaRepository tierReplicaRepo;
+    private final ClassificationRuleReplicaRepository ruleReplicaRepo;
+
+    /**
+     * Classify a customer based on their metrics.
+     * 
+     * IMPORTANT: This method assumes single-ecommerce context (uses &quot;default&quot; ecommerce UUID).
+     * For multi-ecommerce systems, use FidelityClassificationService.classify(UUID, ClassifyRequestV1) instead.
+     * 
+     * @param request contains totalSpent, orderCount, membershipDays
+     * @return ClassifyResponseV1 with matched tier or null
+     * @throws ServiceUnavailableException if matrix unavailable
+     */
+    public ClassifyResponseV1 classify(ClassifyRequestV1 request) {
+        // Use default ecommerce ID for backward compatibility
+        // In production, this should be passed from the caller (DiscountCalculationServiceV2)
+<span class="fc" id="L59">        UUID defaultEcommerceId = UUID.fromString(&quot;00000000-0000-0000-0000-000000000000&quot;);</span>
+        
+<span class="fc" id="L61">        log.info(&quot;Classifying customer (legacy): totalSpent={}, orderCount={}, membershipDays={}&quot;,</span>
+<span class="fc" id="L62">            request.totalSpent(), request.orderCount(), request.membershipDays());</span>
+
+        try {
+            // Try cache first
+<span class="fc" id="L66">            var tiersOptional = cacheService.getTiers(defaultEcommerceId);</span>
+<span class="fc" id="L67">            var rulesOptional = cacheService.getRules(defaultEcommerceId);</span>
+
+            // Fallback to database if cache empty
+<span class="pc bpc" id="L70" title="1 of 4 branches missed.">            if (tiersOptional.isEmpty() || rulesOptional.isEmpty()) {</span>
+<span class="fc" id="L71">                loadMatrixFromDatabase();</span>
+<span class="fc" id="L72">                tiersOptional = cacheService.getTiers(defaultEcommerceId);</span>
+<span class="fc" id="L73">                rulesOptional = cacheService.getRules(defaultEcommerceId);</span>
+            }
+
+<span class="pc bpc" id="L76" title="1 of 4 branches missed.">            if (tiersOptional.isEmpty() || rulesOptional.isEmpty()) {</span>
+<span class="fc" id="L77">                throw new ServiceUnavailableException(&quot;Classification matrix not available&quot;);</span>
+            }
+
+            // Delegate to new JSONB-based service
+<span class="fc" id="L81">            var classificationResult = fidelityClassificationService.classify(defaultEcommerceId, request);</span>
+            
+<span class="fc bfc" id="L83" title="All 2 branches covered.">            if (classificationResult.getTierUid().isPresent()) {</span>
+<span class="fc" id="L84">                return new ClassifyResponseV1(</span>
+<span class="fc" id="L85">                    classificationResult.getTierUid().get(),</span>
+<span class="fc" id="L86">                    classificationResult.getTierName().get(),</span>
+<span class="fc" id="L87">                    classificationResult.getHierarchyLevel().get(),</span>
+<span class="fc" id="L88">                    classificationResult.getDiscountPercentage().get(),</span>
+<span class="fc" id="L89">                    classificationResult.getCriteriaMet(),</span>
+<span class="fc" id="L90">                    Instant.now()</span>
+                );
+            } else {
+<span class="fc" id="L93">                return new ClassifyResponseV1(null, null, null, null, List.of(), Instant.now());</span>
+            }
+<span class="fc" id="L95">        } catch (Exception e) {</span>
+<span class="fc" id="L96">            log.error(&quot;Classification engine error: {}&quot;, e.getMessage(), e);</span>
+<span class="fc" id="L97">            throw new ServiceUnavailableException(&quot;Classification failed: &quot; + e.getMessage());</span>
+        }
+    }
+
+    /**
+     * Load matrix from replica tables (for Cold Start).
+     */
+    private void loadMatrixFromDatabase() {
+<span class="fc" id="L105">        UUID defaultEcommerceId = UUID.fromString(&quot;00000000-0000-0000-0000-000000000000&quot;);</span>
+        
+<span class="fc" id="L107">        log.info(&quot;Loading classification matrix from replica database...&quot;);</span>
+<span class="fc" id="L108">        List&lt;CustomerTierReplicaEntity&gt; tiers = tierReplicaRepo.findByEcommerceIdAndIsActiveTrueOrderByHierarchyLevelAsc(defaultEcommerceId);</span>
+<span class="fc" id="L109">        List&lt;ClassificationRuleReplicaEntity&gt; rules = ruleReplicaRepo.findByEcommerceIdAndDiscountTypeCodeAndIsActiveTrueOrderByPriorityLevelAsc(</span>
+            defaultEcommerceId, &quot;CLASSIFICATION&quot;
+        );
+
+<span class="fc" id="L113">        log.info(&quot;Classification matrix loaded: {} tiers, {} rules&quot;, tiers.size(), rules.size());</span>
+<span class="fc" id="L114">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

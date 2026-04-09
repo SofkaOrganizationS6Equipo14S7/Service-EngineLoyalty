@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EngineRuleService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">EngineRuleService.java</span></div><h1>EngineRuleService.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import com.loyalty.service_engine.domain.entity.ClassificationRuleReplicaEntity;
+import com.loyalty.service_engine.domain.repository.ClassificationRuleReplicaRepository;
+import com.loyalty.service_engine.infrastructure.exception.ResourceNotFoundException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Service for synchronizing rules to engine_rules table.
+ * Consumes RuleEvent from Admin Service via RabbitMQ.
+ *
+ * SPEC-010: Unified rule sync for all types (FIDELITY, SEASONAL, PRODUCT, CLASSIFICATION)
+ */
+@Service
+@RequiredArgsConstructor
+<span class="fc" id="L24">@Slf4j</span>
+@Transactional
+public class EngineRuleService {
+
+    private final ClassificationRuleReplicaRepository ruleRepository;
+
+    /**
+     * Create or update engine rule (idempotent).
+     * 
+     * Used by RuleEventConsumer.handleRuleCreated() and handleRuleUpdated()
+     * Implements CREATE and UPDATE operations from SPEC-010.
+     *
+     * @param ruleId            Rule ID from Admin
+     * @param ecommerceId       Tenant ID
+     * @param name              Rule name
+     * @param description       Rule description
+     * @param discountTypeCode  Type code: FIDELITY|SEASONAL|PRODUCT|CLASSIFICATION
+     * @param discountValue     Discount amount/percentage
+     * @param priorityLevel     Evaluation priority
+     * @param logicConditions   JSONB attributes (flexible)
+     * @param isActive          Active flag
+     * @param appliedWith       Application mode (INDIVIDUAL|STACKED)
+     */
+    public void createOrUpdateEngineRule(
+            UUID ruleId,
+            UUID ecommerceId,
+            String name,
+            String description,
+            String discountTypeCode,
+            BigDecimal discountValue,
+            Integer priorityLevel,
+            Map&lt;String, Object&gt; logicConditions,
+            Boolean isActive,
+            String appliedWith
+    ) {
+        try {
+            // Check if rule already exists (idempotence)
+<span class="fc" id="L61">            ClassificationRuleReplicaEntity existingRule = ruleRepository</span>
+<span class="fc" id="L62">                    .findByIdAndEcommerceId(ruleId, ecommerceId)</span>
+<span class="fc" id="L63">                    .orElse(null);</span>
+
+<span class="fc bfc" id="L65" title="All 2 branches covered.">            if (existingRule != null) {</span>
+                // UPDATE: Modify existing rule
+<span class="fc" id="L67">                existingRule.setName(name);</span>
+<span class="fc" id="L68">                existingRule.setDescription(description);</span>
+<span class="fc" id="L69">                existingRule.setDiscountTypeCode(discountTypeCode);</span>
+<span class="fc" id="L70">                existingRule.setDiscountValue(discountValue);</span>
+<span class="fc" id="L71">                existingRule.setPriorityLevel(priorityLevel);</span>
+<span class="fc" id="L72">                existingRule.setLogicConditions(logicConditions);</span>
+<span class="fc" id="L73">                existingRule.setIsActive(isActive);</span>
+<span class="fc" id="L74">                existingRule.setAppliedWith(appliedWith);</span>
+<span class="fc" id="L75">                existingRule.setUpdatedAt(Instant.now());</span>
+<span class="fc" id="L76">                ruleRepository.save(existingRule);</span>
+                
+<span class="fc" id="L78">                log.info(&quot;Engine rule updated: ruleId={}, ecommerceId={}, discountTypeCode={}&quot;,</span>
+                        ruleId, ecommerceId, discountTypeCode);
+            } else {
+                // INSERT: Create new rule
+<span class="fc" id="L82">                ClassificationRuleReplicaEntity newRule = ClassificationRuleReplicaEntity.builder()</span>
+<span class="fc" id="L83">                        .id(ruleId)</span>
+<span class="fc" id="L84">                        .ecommerceId(ecommerceId)</span>
+<span class="fc" id="L85">                        .name(name)</span>
+<span class="fc" id="L86">                        .description(description)</span>
+<span class="fc" id="L87">                        .discountTypeCode(discountTypeCode)</span>
+<span class="fc" id="L88">                        .discountValue(discountValue)</span>
+<span class="fc" id="L89">                        .priorityLevel(priorityLevel)</span>
+<span class="fc" id="L90">                        .logicConditions(logicConditions)</span>
+<span class="fc" id="L91">                        .isActive(isActive)</span>
+<span class="fc" id="L92">                        .appliedWith(appliedWith)</span>
+<span class="fc" id="L93">                        .syncedAt(Instant.now())</span>
+<span class="fc" id="L94">                        .createdAt(Instant.now())</span>
+<span class="fc" id="L95">                        .updatedAt(Instant.now())</span>
+<span class="fc" id="L96">                        .build();</span>
+<span class="fc" id="L97">                ruleRepository.save(newRule);</span>
+                
+<span class="fc" id="L99">                log.info(&quot;Engine rule created: ruleId={}, ecommerceId={}, discountTypeCode={}&quot;,</span>
+                        ruleId, ecommerceId, discountTypeCode);
+            }
+<span class="fc" id="L102">        } catch (Exception ex) {</span>
+<span class="fc" id="L103">            log.error(&quot;Error syncing rule to engine_rules: ruleId={}, ecommerceId={}, error={}&quot;,</span>
+<span class="fc" id="L104">                    ruleId, ecommerceId, ex.getMessage(), ex);</span>
+<span class="fc" id="L105">            throw new RuntimeException(&quot;Failed to sync rule to engine&quot;, ex);</span>
+<span class="fc" id="L106">        }</span>
+<span class="fc" id="L107">    }</span>
+
+    /**
+     * Mark rule as deleted (soft delete).
+     * 
+     * Used by RuleEventConsumer.handleRuleDeleted()
+     * Implements DELETE operation from SPEC-010.
+     *
+     * @param ruleId      Rule ID from Admin
+     * @param ecommerceId Tenant ID
+     */
+    public void markRuleAsDeleted(UUID ruleId, UUID ecommerceId) {
+        try {
+<span class="fc" id="L120">            ClassificationRuleReplicaEntity rule = ruleRepository</span>
+<span class="fc" id="L121">                    .findByIdAndEcommerceId(ruleId, ecommerceId)</span>
+<span class="fc" id="L122">                    .orElseGet(() -&gt; {</span>
+<span class="fc" id="L123">                        log.warn(&quot;Rule not found in engine_rules for deletion: ruleId={}, ecommerceId={}. &quot; +</span>
+                                &quot;Will be replicated on next CREATE event.&quot;, ruleId, ecommerceId);
+<span class="fc" id="L125">                        return null;</span>
+                    });
+
+<span class="fc bfc" id="L128" title="All 2 branches covered.">            if (rule != null) {</span>
+<span class="fc" id="L129">                rule.setIsActive(false);</span>
+<span class="fc" id="L130">                rule.setUpdatedAt(Instant.now());</span>
+<span class="fc" id="L131">                ruleRepository.save(rule);</span>
+                
+<span class="fc" id="L133">                log.info(&quot;Engine rule marked as deleted: ruleId={}, ecommerceId={}&quot;, ruleId, ecommerceId);</span>
+            }
+<span class="fc" id="L135">        } catch (Exception ex) {</span>
+<span class="fc" id="L136">            log.error(&quot;Error marking rule as deleted in engine_rules: ruleId={}, ecommerceId={}, error={}&quot;,</span>
+<span class="fc" id="L137">                    ruleId, ecommerceId, ex.getMessage(), ex);</span>
+<span class="fc" id="L138">            throw new RuntimeException(&quot;Failed to delete rule from engine&quot;, ex);</span>
+<span class="fc" id="L139">        }</span>
+<span class="fc" id="L140">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

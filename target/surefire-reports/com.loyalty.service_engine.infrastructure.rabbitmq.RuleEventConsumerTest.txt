@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.loyalty.service_engine.infrastructure.rabbitmq.RuleEventConsumerTest
+-------------------------------------------------------------------------------
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.196 s -- in com.loyalty.service_engine.infrastructure.rabbitmq.RuleEventConsumerTest

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ApiKeyEntity.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.domain.entity</a> &gt; <span class="el_source">ApiKeyEntity.java</span></div><h1>ApiKeyEntity.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.domain.entity;
+
+import jakarta.persistence.*;
+import org.springframework.data.domain.Persistable;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = &quot;engine_api_keys&quot;)
+public class ApiKeyEntity implements Persistable&lt;String&gt; {
+    
+    @Id
+    @Column(name = &quot;hashed_key&quot;)
+    private String hashedKey;
+    
+    @Column(name = &quot;ecommerce_id&quot;, nullable = false)
+    private UUID ecommerceId;
+    
+<span class="fc" id="L19">    @Column(name = &quot;is_active&quot;, nullable = false)</span>
+<span class="fc" id="L20">    private Boolean isActive = true;</span>
+    
+    @Column(name = &quot;expires_at&quot;, nullable = false)
+    private Instant expiresAt;
+    
+    @Column(name = &quot;synced_at&quot;)
+    private Instant syncedAt;
+    
+<span class="fc" id="L28">    @Transient</span>
+    private boolean isNew = true;
+
+<span class="fc" id="L31">    public ApiKeyEntity() {}</span>
+
+    @Override
+<span class="nc" id="L34">    public String getId() { return hashedKey; }</span>
+
+    @Override
+<span class="nc" id="L37">    public boolean isNew() { return isNew; }</span>
+
+    @PostLoad
+    @PostPersist
+<span class="nc" id="L41">    void markNotNew() { this.isNew = false; }</span>
+    
+<span class="fc" id="L43">    public String getHashedKey() { return hashedKey; }</span>
+<span class="fc" id="L44">    public void setHashedKey(String hashedKey) { this.hashedKey = hashedKey; }</span>
+<span class="fc" id="L45">    public UUID getEcommerceId() { return ecommerceId; }</span>
+<span class="fc" id="L46">    public void setEcommerceId(UUID ecommerceId) { this.ecommerceId = ecommerceId; }</span>
+<span class="nc" id="L47">    public Boolean getIsActive() { return isActive; }</span>
+<span class="nc" id="L48">    public void setIsActive(Boolean isActive) { this.isActive = isActive; }</span>
+<span class="nc" id="L49">    public Instant getExpiresAt() { return expiresAt; }</span>
+<span class="fc" id="L50">    public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }</span>
+<span class="nc" id="L51">    public Instant getSyncedAt() { return syncedAt; }</span>
+<span class="nc" id="L52">    public void setSyncedAt(Instant syncedAt) { this.syncedAt = syncedAt; }</span>
+    
+    @PrePersist
+    protected void onCreate() {
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (syncedAt == null) {</span>
+<span class="nc" id="L57">            syncedAt = Instant.now();</span>
+        }
+<span class="nc" id="L59">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

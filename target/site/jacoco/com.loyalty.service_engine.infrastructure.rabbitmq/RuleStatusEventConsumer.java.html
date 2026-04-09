@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RuleStatusEventConsumer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.infrastructure.rabbitmq</a> &gt; <span class="el_source">RuleStatusEventConsumer.java</span></div><h1>RuleStatusEventConsumer.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.infrastructure.rabbitmq;
+
+import com.loyalty.service_engine.application.dto.RuleStatusChangedEvent;
+import com.loyalty.service_engine.application.service.ClassificationMatrixCaffeineCacheService;
+import com.loyalty.service_engine.domain.entity.ClassificationRuleReplicaEntity;
+import com.loyalty.service_engine.domain.repository.ClassificationRuleReplicaRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+
+/**
+ * Consumes rule status change events from Admin Service.
+ * Synchronizes is_active flag to engine_rules table and invalidates cache.
+ *
+ * SPEC-008 (Admin): Publishes RuleStatusChangedEvent when rule status changes (PATCH endpoint)
+ * SPEC-009 (Engine): Consumes event and updates engine_rules.is_active + invalidates cache
+ *
+ * Event Flow:
+ * Admin Service (PATCH /api/v1/rules/{ruleId}/status) → RabbitMQ
+ *   → Engine Service (RuleStatusEventConsumer) → DB update + Cache invalidation
+ *
+ * Queue: engine-service-rule-status-changes (routing key: rule.status.changed)
+ * DLQ: engine-service-rule-status-changes.dlq (on permanent failure)
+ */
+<span class="fc" id="L28">@Slf4j</span>
+@Component
+@RequiredArgsConstructor
+public class RuleStatusEventConsumer {
+
+    private final ClassificationRuleReplicaRepository ruleRepository;
+    private final ClassificationMatrixCaffeineCacheService cacheService;
+
+    @RabbitListener(queues = &quot;${rabbitmq.queue.rule-status-changes:engine-service-rule-status-changes}&quot;)
+    public void handleRuleStatusChanged(RuleStatusChangedEvent event) {
+        
+        // 1. Validate payload
+<span class="fc bfc" id="L40" title="All 8 branches covered.">        if (event == null || event.ruleId() == null || event.ecommerceId() == null || event.newStatus() == null) {</span>
+<span class="fc" id="L41">            log.error(&quot;Received invalid RuleStatusChangedEvent: ruleId={}, ecommerceId={}, newStatus={}&quot;,</span>
+<span class="fc bfc" id="L42" title="All 2 branches covered.">                    event != null ? event.ruleId() : &quot;null&quot;,</span>
+<span class="fc bfc" id="L43" title="All 2 branches covered.">                    event != null ? event.ecommerceId() : &quot;null&quot;,</span>
+<span class="fc bfc" id="L44" title="All 2 branches covered.">                    event != null ? event.newStatus() : &quot;null&quot;);</span>
+<span class="fc" id="L45">            return;</span>
+        }
+        
+        try {
+            // 2. Find rule in DB replica (engine_rules table)
+            // Tenant isolation: findByIdAndEcommerceId ensures only rules for this ecommerce
+<span class="fc" id="L51">            ClassificationRuleReplicaEntity rule = ruleRepository</span>
+<span class="fc" id="L52">                .findByIdAndEcommerceId(event.ruleId(), event.ecommerceId())</span>
+<span class="fc" id="L53">                .orElseGet(() -&gt; {</span>
+<span class="fc" id="L54">                    log.warn(&quot;Rule {} not found in engine_rules for ecommerce {}. &quot; +</span>
+                            &quot;Skipping status update. Will be replicated on next CREATE/UPDATE event.&quot;,
+<span class="fc" id="L56">                            event.ruleId(), event.ecommerceId());</span>
+<span class="fc" id="L57">                    return null;</span>
+                });
+            
+<span class="fc bfc" id="L60" title="All 2 branches covered.">            if (rule == null) return;</span>
+            
+            // 3. Update status and timestamp
+<span class="fc" id="L63">            Boolean previousStatus = rule.getIsActive();</span>
+<span class="fc" id="L64">            rule.setIsActive(event.newStatus());</span>
+<span class="fc" id="L65">            rule.setUpdatedAt(Instant.now());</span>
+<span class="fc" id="L66">            ruleRepository.save(rule);</span>
+            
+<span class="fc" id="L68">            log.info(&quot;Rule status updated in engine_rules: ruleId={}, ecommerceId={}, previousStatus={}, newStatus={}&quot;,</span>
+<span class="fc" id="L69">                    event.ruleId(), event.ecommerceId(), previousStatus, event.newStatus());</span>
+            
+            // 4. Invalidate cache for the ecommerce
+            // Forces lazy reload on next classification/discount calculation
+<span class="fc" id="L73">            cacheService.invalidateEcommerce(event.ecommerceId());</span>
+<span class="fc" id="L74">            log.debug(&quot;Cache invalidated for ecommerce: {} after rule status change&quot;, event.ecommerceId());</span>
+            
+<span class="fc" id="L76">        } catch (Exception ex) {</span>
+<span class="fc" id="L77">            log.error(&quot;Error processing RuleStatusChangedEvent: ruleId={}, ecommerceId={}, newStatus={}&quot;,</span>
+<span class="fc" id="L78">                    event.ruleId(), event.ecommerceId(), event.newStatus(), ex);</span>
+<span class="fc" id="L79">            throw ex; // Let RabbitMQ handle retry and DLQ</span>
+<span class="fc" id="L80">        }</span>
+<span class="fc" id="L81">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

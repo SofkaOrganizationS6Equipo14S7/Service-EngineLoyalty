@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionLogEntity.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.domain.entity</a> &gt; <span class="el_source">TransactionLogEntity.java</span></div><h1>TransactionLogEntity.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.domain.entity;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Entidad para auditoría de cálculos de descuentos en transacciones.
+ * Registra cada cálculo de carrito incluyendo descuentos aplicados, caps y métricas.
+ * 
+ * Almacenamiento:
+ * - Subtotal, descuentos (calculado vs aplicado), monto final
+ * - Flag de capping si se limitó el descuento
+ * - Reglas aplicadas en JSONB (applied_rules_json)
+ * - Métricas del cliente sin PII (client_metrics_json)
+ * - Tier de clasificación del cliente
+ * - Timestamps de cálculo y expiración (7 días para limpieza)
+ * 
+ * Propósito: Auditoría, debugging, cumplimiento normativo, análisis de descuentos
+ */
+@Entity
+@Table(
+    name = &quot;transaction_logs&quot;,
+    indexes = {
+        @Index(name = &quot;idx_transaction_logs_ecommerce_created&quot;, columnList = &quot;ecommerce_id, created_at DESC&quot;),
+        @Index(name = &quot;idx_transaction_logs_expires_at&quot;, columnList = &quot;created_at, expires_at&quot;),
+        @Index(name = &quot;idx_transaction_logs_external_order&quot;, columnList = &quot;ecommerce_id, external_order_id&quot;, unique = true)
+    }
+)
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class TransactionLogEntity {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = &quot;id&quot;)
+    private UUID id;
+    
+    /**
+     * Identificador del e-commerce (multi-tenant)
+     */
+    @Column(name = &quot;ecommerce_id&quot;, nullable = false)
+    private UUID ecommerceId;
+    
+    /**
+     * ID externo del pedido/orden (proporcionado por e-commerce)
+     * Único por ecommerce para evitar duplicados
+     */
+    @Column(name = &quot;external_order_id&quot;, nullable = false, length = 255)
+    private String externalOrderId;
+    
+    /**
+     * Monto subtotal del carrito antes de descuentos
+     */
+    @Column(name = &quot;subtotal_amount&quot;, nullable = false, precision = 12, scale = 4)
+    private BigDecimal subtotalAmount;
+    
+    /**
+     * Descuento calculado (antes de aplicar cap)
+     */
+    @Column(name = &quot;discount_calculated&quot;, nullable = false, precision = 12, scale = 2)
+    private BigDecimal discountCalculated;
+    
+    /**
+     * Descuento finalmente aplicado (respeta cap)
+     */
+    @Column(name = &quot;discount_applied&quot;, nullable = false, precision = 12, scale = 2)
+    private BigDecimal discountApplied;
+    
+    /**
+     * Monto final después de descuentos (subtotal - discount_applied)
+     */
+    @Column(name = &quot;final_amount&quot;, nullable = false, precision = 12, scale = 2)
+    private BigDecimal finalAmount;
+    
+    /**
+     * Flag: true si se aplicó max_discount_cap
+     */
+    @Column(name = &quot;was_capped&quot;, nullable = false)
+    private Boolean wasCapped;
+    
+    /**
+     * Razón del capping (ej. &quot;max_discount_cap&quot;, null si no fue capeado)
+     */
+    @Column(name = &quot;cap_reason&quot;, length = 100)
+    private String capReason;
+    
+    /**
+     * Reglas aplicadas serializadas en JSONB
+     * Array de { rule_id, rule_name, discount_type, discount_percentage, discount_amount, priority_level }
+     */
+    @Column(name = &quot;applied_rules_json&quot;, columnDefinition = &quot;JSONB&quot;)
+    @JdbcTypeCode(SqlTypes.JSON)
+    private JsonNode appliedRulesJson;
+    
+    /**
+     * Tier de clasificación del cliente (ej. &quot;Gold&quot;, &quot;Silver&quot;, &quot;Bronze&quot;)
+     */
+    @Column(name = &quot;customer_tier&quot;, length = 50)
+    private String customerTier;
+    
+    /**
+     * Métricas del cliente sin datos personales (total_spent, order_count, membership_days)
+     * En JSONB para flexibilidad
+     */
+    @Column(name = &quot;client_metrics_json&quot;, columnDefinition = &quot;JSONB&quot;)
+    @JdbcTypeCode(SqlTypes.JSON)
+    private JsonNode clientMetricsJson;
+    
+    /**
+     * Estado del cálculo: SUCCESS, PARTIALLY_APPLIED, REJECTED
+     */
+    @Column(name = &quot;status&quot;, nullable = false, length = 50)
+    private String status;
+    
+    /**
+     * Timestamp cuando se realizó el cálculo
+     */
+    @Column(name = &quot;calculated_at&quot;, nullable = false, columnDefinition = &quot;TIMESTAMP WITH TIME ZONE&quot;)
+    private Instant calculatedAt;
+    
+    /**
+     * Timestamp de creación del registro
+     */
+    @Column(name = &quot;created_at&quot;, nullable = false, updatable = false, columnDefinition = &quot;TIMESTAMP WITH TIME ZONE&quot;)
+    private Instant createdAt;
+    
+    /**
+     * Timestamp de expiración (created_at + 7 días) para limpieza automática
+     */
+    @Column(name = &quot;expires_at&quot;, columnDefinition = &quot;TIMESTAMP WITH TIME ZONE&quot;)
+    private Instant expiresAt;
+    
+    @PrePersist
+    protected void onCreate() {
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (createdAt == null) {</span>
+<span class="nc" id="L148">            createdAt = Instant.now();</span>
+        }
+<span class="nc bnc" id="L150" title="All 2 branches missed.">        if (calculatedAt == null) {</span>
+<span class="nc" id="L151">            calculatedAt = Instant.now();</span>
+        }
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (expiresAt == null) {</span>
+            // 7 días de retención
+<span class="nc" id="L155">            expiresAt = createdAt.plusSeconds(7 * 86400);</span>
+        }
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (status == null) {</span>
+<span class="nc" id="L158">            status = &quot;SUCCESS&quot;;</span>
+        }
+<span class="nc" id="L160">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

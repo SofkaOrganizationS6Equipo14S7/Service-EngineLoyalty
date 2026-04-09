@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FidelityClassificationService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">FidelityClassificationService.java</span></div><h1>FidelityClassificationService.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import com.loyalty.service_engine.application.dto.ClassificationResult;
+import com.loyalty.service_engine.application.dto.ClassifyRequestV1;
+import com.loyalty.service_engine.application.dto.ClassificationRuleDTO;
+import com.loyalty.service_engine.application.dto.CustomerTierDTO;
+import com.loyalty.service_engine.infrastructure.exception.ClassificationValidationException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Internal service for customer loyalty tier classification.
+ * NOT EXPOSED AS PUBLIC ENDPOINT.
+ *
+ * Classification Logic (3-path):
+ * 1. EXACT MATCH: Customer metrics match one tier's criteria
+ * 2. FALLTHROUGH: Customer metrics exceed a tier's base requirements
+ * 3. NONE: Customer does not meet minimum criteria
+ *
+ * Determinism: Same payload always produces same classification.
+ * Evaluation via JSONB logic_conditions with fields:
+ * - min_spent, max_spent
+ * - min_order_count
+ * - min_membership_days
+ * - evaluation_logic (optional dynamic expression)
+ */
+<span class="fc" id="L37">@Slf4j</span>
+@Service
+@RequiredArgsConstructor
+public class FidelityClassificationService {
+
+    private final ClassificationMatrixCaffeineCacheService cacheService;
+
+    /**
+     * Classify a customer based on their metrics.
+     * Evaluates JSONB logic_conditions to determine tier.
+     *
+     * @param ecommerceId Tenant identifier
+     * @param request Customer metrics (totalSpent, orderCount, membershipDays)
+     * @return ClassificationResult with tier info or NONE
+     * @throws ClassificationValidationException if validation fails
+     */
+    public ClassificationResult classify(UUID ecommerceId, ClassifyRequestV1 request) {
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (ecommerceId == null) {</span>
+<span class="fc" id="L55">            log.warn(&quot;Classification request: ecommerceId is null&quot;);</span>
+<span class="fc" id="L56">            throw new ClassificationValidationException(&quot;ecommerceId cannot be null&quot;);</span>
+        }
+
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (request == null) {</span>
+<span class="fc" id="L60">            log.warn(&quot;Classification request: request is null&quot;);</span>
+<span class="fc" id="L61">            throw new ClassificationValidationException(&quot;classification request cannot be null&quot;);</span>
+        }
+
+<span class="fc bfc" id="L64" title="All 4 branches covered.">        if (request.totalSpent() == null || request.totalSpent().signum() &lt; 0) {</span>
+<span class="fc" id="L65">            log.warn(&quot;Classification request: invalid totalSpent={}&quot;, request.totalSpent());</span>
+<span class="fc" id="L66">            throw new ClassificationValidationException(&quot;totalSpent must be non-negative&quot;);</span>
+        }
+
+<span class="fc bfc" id="L69" title="All 4 branches covered.">        if (request.orderCount() == null || request.orderCount() &lt; 0) {</span>
+<span class="fc" id="L70">            log.warn(&quot;Classification request: invalid orderCount={}&quot;, request.orderCount());</span>
+<span class="fc" id="L71">            throw new ClassificationValidationException(&quot;orderCount must be non-negative&quot;);</span>
+        }
+
+<span class="fc bfc" id="L74" title="All 4 branches covered.">        if (request.membershipDays() == null || request.membershipDays() &lt; 0) {</span>
+<span class="fc" id="L75">            log.warn(&quot;Classification request: invalid membershipDays={}&quot;, request.membershipDays());</span>
+<span class="fc" id="L76">            throw new ClassificationValidationException(&quot;membershipDays must be non-negative&quot;);</span>
+        }
+
+        // Fetch tiers from cache
+<span class="fc" id="L80">        Optional&lt;List&lt;CustomerTierDTO&gt;&gt; tiersOpt = cacheService.getTiers(ecommerceId);</span>
+<span class="fc bfc" id="L81" title="All 4 branches covered.">        if (tiersOpt.isEmpty() || tiersOpt.get().isEmpty()) {</span>
+<span class="fc" id="L82">            log.debug(&quot;No tiers configured for ecommerce: {}&quot;, ecommerceId);</span>
+<span class="fc" id="L83">            return ClassificationResult.NONE;</span>
+        }
+
+        // Fetch rules from cache
+<span class="fc" id="L87">        Optional&lt;List&lt;ClassificationRuleDTO&gt;&gt; rulesOpt = cacheService.getRules(ecommerceId);</span>
+<span class="fc bfc" id="L88" title="All 4 branches covered.">        if (rulesOpt.isEmpty() || rulesOpt.get().isEmpty()) {</span>
+<span class="fc" id="L89">            log.debug(&quot;No classification rules configured for ecommerce: {}&quot;, ecommerceId);</span>
+<span class="fc" id="L90">            return ClassificationResult.NONE;</span>
+        }
+
+<span class="fc" id="L93">        List&lt;CustomerTierDTO&gt; tiers = tiersOpt.get();</span>
+<span class="fc" id="L94">        List&lt;ClassificationRuleDTO&gt; rules = rulesOpt.get();</span>
+
+        // Find matching tier by evaluating rules
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        for (ClassificationRuleDTO rule : rules) {</span>
+<span class="fc bfc" id="L98" title="All 4 branches covered.">            if (rule.isActive() &amp;&amp; rule.logicConditions() != null) {</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">                if (evaluateConditions(rule.logicConditions(), request)) {</span>
+                    // Find the tier associated with this rule
+<span class="fc" id="L101">                    Optional&lt;CustomerTierDTO&gt; tierOpt = tiers.stream()</span>
+<span class="fc" id="L102">                        .filter(t -&gt; t.isActive())</span>
+<span class="fc" id="L103">                        .max(Comparator.comparingInt(CustomerTierDTO::hierarchyLevel));</span>
+
+<span class="fc bfc" id="L105" title="All 2 branches covered.">                    if (tierOpt.isPresent()) {</span>
+<span class="fc" id="L106">                        CustomerTierDTO tier = tierOpt.get();</span>
+<span class="fc" id="L107">                        List&lt;String&gt; criteriaMet = extractCriteriaNames(rule.logicConditions());</span>
+                        
+<span class="fc" id="L109">                        log.debug(&quot;Classification matched: ecommerce={}, tier={}, level={}, criteria={}&quot;,</span>
+<span class="fc" id="L110">                            ecommerceId, tier.name(), tier.hierarchyLevel(), criteriaMet);</span>
+
+<span class="fc" id="L112">                        return ClassificationResult.of(</span>
+<span class="fc" id="L113">                            tier.uid(),</span>
+<span class="fc" id="L114">                            tier.name(),</span>
+<span class="fc" id="L115">                            tier.hierarchyLevel(),</span>
+<span class="fc" id="L116">                            tier.discountPercentage(),</span>
+                            criteriaMet
+                        );
+                    }
+                }
+            }
+<span class="fc" id="L122">        }</span>
+
+        // PATH 3: No exact match - assign minimum tier (lowest hierarchy level)
+<span class="fc" id="L125">        Optional&lt;CustomerTierDTO&gt; minimumTier = tiers.stream()</span>
+<span class="fc" id="L126">            .filter(CustomerTierDTO::isActive)</span>
+<span class="fc" id="L127">            .min(Comparator.comparingInt(CustomerTierDTO::hierarchyLevel));</span>
+
+<span class="fc bfc" id="L129" title="All 2 branches covered.">        if (minimumTier.isPresent()) {</span>
+<span class="fc" id="L130">            CustomerTierDTO tier = minimumTier.get();</span>
+<span class="fc" id="L131">            log.debug(&quot;Classification fallthrough: ecommerce={}, assigned minimum tier={}, level={}&quot;,</span>
+<span class="fc" id="L132">                ecommerceId, tier.name(), tier.hierarchyLevel());</span>
+
+<span class="fc" id="L134">            return ClassificationResult.of(</span>
+<span class="fc" id="L135">                tier.uid(),</span>
+<span class="fc" id="L136">                tier.name(),</span>
+<span class="fc" id="L137">                tier.hierarchyLevel(),</span>
+<span class="fc" id="L138">                tier.discountPercentage(),</span>
+<span class="fc" id="L139">                List.of(&quot;fallback_minimum_tier&quot;)</span>
+            );
+        }
+
+<span class="fc" id="L143">        log.warn(&quot;Classification failed: no valid tiers available for ecommerce={}&quot;, ecommerceId);</span>
+<span class="fc" id="L144">        return ClassificationResult.NONE;</span>
+    }
+
+    /**
+     * Evaluate JSONB logic_conditions against customer metrics.
+     * Supports fields: min_spent, max_spent, min_order_count, min_membership_days
+     */
+    private boolean evaluateConditions(Map&lt;String, Object&gt; conditions, ClassifyRequestV1 request) {
+        // Check min_spent
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        if (conditions.containsKey(&quot;min_spent&quot;)) {</span>
+<span class="fc" id="L154">            BigDecimal minSpent = extractBigDecimal(conditions.get(&quot;min_spent&quot;));</span>
+<span class="fc bfc" id="L155" title="All 4 branches covered.">            if (minSpent != null &amp;&amp; request.totalSpent().compareTo(minSpent) &lt; 0) {</span>
+<span class="fc" id="L156">                return false;</span>
+            }
+        }
+
+        // Check max_spent
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        if (conditions.containsKey(&quot;max_spent&quot;)) {</span>
+<span class="fc" id="L162">            BigDecimal maxSpent = extractBigDecimal(conditions.get(&quot;max_spent&quot;));</span>
+<span class="pc bpc" id="L163" title="1 of 4 branches missed.">            if (maxSpent != null &amp;&amp; request.totalSpent().compareTo(maxSpent) &gt; 0) {</span>
+<span class="fc" id="L164">                return false;</span>
+            }
+        }
+
+        // Check min_order_count
+<span class="fc bfc" id="L169" title="All 2 branches covered.">        if (conditions.containsKey(&quot;min_order_count&quot;)) {</span>
+<span class="fc" id="L170">            Integer minOrders = extractInteger(conditions.get(&quot;min_order_count&quot;));</span>
+<span class="fc bfc" id="L171" title="All 4 branches covered.">            if (minOrders != null &amp;&amp; request.orderCount() &lt; minOrders) {</span>
+<span class="fc" id="L172">                return false;</span>
+            }
+        }
+
+        // Check min_membership_days
+<span class="fc bfc" id="L177" title="All 2 branches covered.">        if (conditions.containsKey(&quot;min_membership_days&quot;)) {</span>
+<span class="fc" id="L178">            Integer minDays = extractInteger(conditions.get(&quot;min_membership_days&quot;));</span>
+<span class="pc bpc" id="L179" title="1 of 4 branches missed.">            if (minDays != null &amp;&amp; request.membershipDays() &lt; minDays) {</span>
+<span class="fc" id="L180">                return false;</span>
+            }
+        }
+
+<span class="fc" id="L184">        return true;</span>
+    }
+
+    /**
+     * Extract BigDecimal from JSONB field (handles nested structure).
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private BigDecimal extractBigDecimal(Object field) {
+<span class="pc bpc" id="L192" title="1 of 2 branches missed.">        if (field == null) return null;</span>
+
+<span class="fc bfc" id="L194" title="All 2 branches covered.">        if (field instanceof BigDecimal) {</span>
+<span class="fc" id="L195">            return (BigDecimal) field;</span>
+        }
+
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        if (field instanceof Number) {</span>
+<span class="fc" id="L199">            return new BigDecimal(field.toString());</span>
+        }
+
+<span class="fc bfc" id="L202" title="All 2 branches covered.">        if (field instanceof Map) {</span>
+<span class="fc" id="L203">            Map&lt;String, Object&gt; map = (Map&lt;String, Object&gt;) field;</span>
+<span class="fc" id="L204">            Object value = map.get(&quot;value&quot;);</span>
+<span class="fc bfc" id="L205" title="All 2 branches covered.">            if (value != null) {</span>
+<span class="fc" id="L206">                return new BigDecimal(value.toString());</span>
+            }
+        }
+
+<span class="fc bfc" id="L210" title="All 2 branches covered.">        if (field instanceof String) {</span>
+            try {
+<span class="fc" id="L212">                return new BigDecimal((String) field);</span>
+<span class="fc" id="L213">            } catch (NumberFormatException e) {</span>
+<span class="fc" id="L214">                log.warn(&quot;Could not parse BigDecimal from: {}&quot;, field);</span>
+            }
+        }
+
+<span class="fc" id="L218">        return null;</span>
+    }
+
+    /**
+     * Extract Integer from JSONB field (handles nested structure).
+     */
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private Integer extractInteger(Object field) {
+<span class="pc bpc" id="L226" title="1 of 2 branches missed.">        if (field == null) return null;</span>
+
+<span class="fc bfc" id="L228" title="All 2 branches covered.">        if (field instanceof Integer) {</span>
+<span class="fc" id="L229">            return (Integer) field;</span>
+        }
+
+<span class="fc bfc" id="L232" title="All 2 branches covered.">        if (field instanceof Number) {</span>
+<span class="fc" id="L233">            return ((Number) field).intValue();</span>
+        }
+
+<span class="fc bfc" id="L236" title="All 2 branches covered.">        if (field instanceof Map) {</span>
+<span class="fc" id="L237">            Map&lt;String, Object&gt; map = (Map&lt;String, Object&gt;) field;</span>
+<span class="fc" id="L238">            Object value = map.get(&quot;value&quot;);</span>
+<span class="fc bfc" id="L239" title="All 2 branches covered.">            if (value != null) {</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">                if (value instanceof Integer) {</span>
+<span class="fc" id="L241">                    return (Integer) value;</span>
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">                } else if (value instanceof Number) {</span>
+<span class="fc" id="L243">                    return ((Number) value).intValue();</span>
+                }
+            }
+        }
+
+<span class="fc bfc" id="L248" title="All 2 branches covered.">        if (field instanceof String) {</span>
+            try {
+<span class="fc" id="L250">                return Integer.parseInt((String) field);</span>
+<span class="fc" id="L251">            } catch (NumberFormatException e) {</span>
+<span class="fc" id="L252">                log.warn(&quot;Could not parse Integer from: {}&quot;, field);</span>
+            }
+        }
+
+<span class="fc" id="L256">        return null;</span>
+    }
+
+    /**
+     * Extract criteria names from logic_conditions for audit logging.
+     */
+    private List&lt;String&gt; extractCriteriaNames(Map&lt;String, Object&gt; conditions) {
+<span class="fc" id="L263">        List&lt;String&gt; criteria = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">        if (conditions.containsKey(&quot;min_spent&quot;)) criteria.add(&quot;min_spent&quot;);</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (conditions.containsKey(&quot;max_spent&quot;)) criteria.add(&quot;max_spent&quot;);</span>
+<span class="fc bfc" id="L266" title="All 2 branches covered.">        if (conditions.containsKey(&quot;min_order_count&quot;)) criteria.add(&quot;min_order_count&quot;);</span>
+<span class="fc bfc" id="L267" title="All 2 branches covered.">        if (conditions.containsKey(&quot;min_membership_days&quot;)) criteria.add(&quot;min_membership_days&quot;);</span>
+<span class="fc" id="L268">        return criteria;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

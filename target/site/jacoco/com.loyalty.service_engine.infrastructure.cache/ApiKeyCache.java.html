@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ApiKeyCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.infrastructure.cache</a> &gt; <span class="el_source">ApiKeyCache.java</span></div><h1>ApiKeyCache.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.infrastructure.cache;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
+import com.loyalty.service_engine.domain.entity.ApiKeyEntity;
+import com.loyalty.service_engine.domain.repository.ApiKeyRepository;
+import com.loyalty.service_engine.infrastructure.util.HashingUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Caché Caffeine para API Keys hasheadas (SHA-256).
+ * 
+ * Estructura: {hashedKey → ecommerceId}
+ * 
+ * Flujo de seguridad:
+ * 1. Admin Service publica evento con hashedKey (SHA-256)
+ * 2. Event Listener recibe el hash y lo agrega a caché + BD
+ * 3. En validación, Engine recibe plaintext en Authorization header
+ * 4. Engine hashea el plaintext con SHA-256 y busca en caché
+ * 5. Si coincide, la solicitud es válida
+ * 
+ * Se sincroniza con BD y RabbitMQ.
+ */
+@Component
+<span class="fc" id="L31">@Slf4j</span>
+public class ApiKeyCache {
+    
+    private final Cache&lt;String, String&gt; cache;
+    private final ApiKeyRepository apiKeyRepository;
+    
+<span class="fc" id="L37">    public ApiKeyCache(ApiKeyRepository apiKeyRepository) {</span>
+<span class="fc" id="L38">        this.apiKeyRepository = apiKeyRepository;</span>
+        
+        // Configurar caché con expiración de 1 día
+<span class="fc" id="L41">        this.cache = Caffeine.newBuilder()</span>
+<span class="fc" id="L42">            .maximumSize(10_000)</span>
+<span class="fc" id="L43">            .expireAfterWrite(1, TimeUnit.DAYS)</span>
+<span class="fc" id="L44">            .recordStats()</span>
+<span class="fc" id="L45">            .build();</span>
+        
+        // Cargar keys al inicializar
+<span class="fc" id="L48">        loadFromDatabase();</span>
+<span class="fc" id="L49">    }</span>
+    
+    /**
+     * Carga todas las API Keys desde BD y las inserta en caché.
+     * Ejecutado al startup de Engine (cold start).
+     */
+    public void loadFromDatabase() {
+        try {
+<span class="fc" id="L57">            log.info(&quot;Loading API Keys from database into cache...&quot;);</span>
+<span class="fc" id="L58">            List&lt;ApiKeyEntity&gt; keys = apiKeyRepository.findAll();</span>
+            
+<span class="fc bfc" id="L60" title="All 2 branches covered.">            for (ApiKeyEntity key : keys) {</span>
+<span class="fc" id="L61">                cache.put(key.getHashedKey(), key.getEcommerceId().toString());</span>
+<span class="fc" id="L62">            }</span>
+            
+<span class="fc" id="L64">            log.info(&quot;Loaded {} API Keys into cache&quot;, keys.size());</span>
+<span class="fc" id="L65">        } catch (Exception e) {</span>
+<span class="fc" id="L66">            log.error(&quot;Error loading API Keys from database&quot;, e);</span>
+            // No lanzar excepción, permitir que Engine arranque con caché vacía
+<span class="fc" id="L68">        }</span>
+<span class="fc" id="L69">    }</span>
+    
+    /**
+     * Valida si una API Key plaintext es válida.
+     * 
+     * Flujo:
+     * 1. Recibe el plaintext de Authorization: Bearer &lt;plaintext&gt;
+     * 2. Hashea con SHA-256
+     * 3. Busca el hash en caché
+     * 4. Retorna true si existe
+     * 
+     * Búsqueda en caché (&lt; 1ms esperado).
+     * 
+     * @param plainKeyValue el plaintext de la API Key
+     * @return true si la clave existe en caché, false si no
+     */
+    public boolean validateKey(String plainKeyValue) {
+<span class="fc bfc" id="L86" title="All 4 branches covered.">        if (plainKeyValue == null || plainKeyValue.isEmpty()) {</span>
+<span class="fc" id="L87">            return false;</span>
+        }
+        
+        // 1. Hashear el plaintext recibido
+<span class="fc" id="L91">        String hashedKey = HashingUtil.sha256(plainKeyValue);</span>
+        
+        // 2. Buscar en caché
+<span class="fc" id="L94">        String ecommerceId = cache.getIfPresent(hashedKey);</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        boolean isValid = ecommerceId != null;</span>
+        
+<span class="fc" id="L97">        log.debug(&quot;API Key validation: hash={} - {}&quot;, </span>
+<span class="fc" id="L98">            hashedKey.substring(0, Math.min(8, hashedKey.length())) + &quot;...&quot;, </span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">            isValid ? &quot;VALID&quot; : &quot;INVALID&quot;);</span>
+        
+<span class="fc" id="L101">        return isValid;</span>
+    }
+    
+    /**
+     * Obtiene el ecommerce asociado a una API Key plaintext.
+     * 
+     * @param plainKeyValue el plaintext de la API Key
+     * @return ecommerceId si existe, null si no
+     */
+    public String getEcommerceId(String plainKeyValue) {
+<span class="fc bfc" id="L111" title="All 4 branches covered.">        if (plainKeyValue == null || plainKeyValue.isEmpty()) {</span>
+<span class="fc" id="L112">            return null;</span>
+        }
+        
+        // Hashear el plaintext
+<span class="fc" id="L116">        String hashedKey = HashingUtil.sha256(plainKeyValue);</span>
+<span class="fc" id="L117">        return cache.getIfPresent(hashedKey);</span>
+    }
+    
+    /**
+     * Agrega una nueva API Key hasheada a caché y BD.
+     * Llamado cuando se recibe evento API_KEY_CREATED desde RabbitMQ.
+     * 
+     * @param hashedKeyValue el hash SHA-256 (ya hasheado por Admin Service)
+     * @param ecommerceId el ecommerce propietario
+     */
+    public void addKey(String hashedKeyValue, String ecommerceId) {
+        try {
+            // Insertar en BD
+<span class="fc" id="L130">            ApiKeyEntity entity = new ApiKeyEntity();</span>
+<span class="fc" id="L131">            entity.setHashedKey(hashedKeyValue);</span>
+<span class="fc" id="L132">            entity.setEcommerceId(UUID.fromString(ecommerceId));</span>
+<span class="fc" id="L133">            entity.setExpiresAt(java.time.Instant.now().plus(java.time.Duration.ofDays(365)));</span>
+<span class="fc" id="L134">            apiKeyRepository.save(entity);</span>
+            
+            // Insertar en caché
+<span class="fc" id="L137">            cache.put(hashedKeyValue, ecommerceId);</span>
+            
+<span class="fc" id="L139">            log.info(&quot;API Key added to cache: hash={}, ecommerceId={}&quot;,</span>
+<span class="fc" id="L140">                hashedKeyValue.substring(0, Math.min(8, hashedKeyValue.length())) + &quot;...&quot;,</span>
+                ecommerceId);
+<span class="fc" id="L142">        } catch (Exception e) {</span>
+<span class="fc" id="L143">            log.error(&quot;Error adding API Key to cache&quot;, e);</span>
+<span class="fc" id="L144">            throw new RuntimeException(&quot;Error adding API Key&quot;, e);</span>
+<span class="fc" id="L145">        }</span>
+<span class="fc" id="L146">    }</span>
+    
+    /**
+     * Elimina una API Key hasheada de caché y BD.
+     * Llamado cuando se recibe evento API_KEY_DELETED desde RabbitMQ.
+     * 
+     * @param hashedKeyValue el hash SHA-256 a eliminar
+     */
+    public void removeKey(String hashedKeyValue) {
+        try {
+            // Eliminar de BD
+<span class="fc" id="L157">            apiKeyRepository.findByHashedKey(hashedKeyValue)</span>
+<span class="fc" id="L158">                .ifPresent(apiKeyRepository::delete);</span>
+            
+            // Eliminar de caché
+<span class="fc" id="L161">            cache.invalidate(hashedKeyValue);</span>
+            
+<span class="fc" id="L163">            log.info(&quot;API Key removed from cache: hash={}&quot;,</span>
+<span class="fc" id="L164">                hashedKeyValue.substring(0, Math.min(8, hashedKeyValue.length())) + &quot;...&quot;);</span>
+<span class="fc" id="L165">        } catch (Exception e) {</span>
+<span class="fc" id="L166">            log.error(&quot;Error removing API Key from cache&quot;, e);</span>
+<span class="fc" id="L167">            throw new RuntimeException(&quot;Error removing API Key&quot;, e);</span>
+<span class="fc" id="L168">        }</span>
+<span class="fc" id="L169">    }</span>
+    
+    /**
+     * Obtiene estadísticas de caché.
+     */
+    public CacheStats getCacheStats() {
+<span class="fc" id="L175">        return cache.stats();</span>
+    }
+    
+    /**
+     * Limpia toda la caché y la recarga de BD.
+     * Útil para resincronización.
+     */
+    public void refresh() {
+<span class="fc" id="L183">        cache.invalidateAll();</span>
+<span class="fc" id="L184">        loadFromDatabase();</span>
+<span class="fc" id="L185">        log.info(&quot;Cache refreshed&quot;);</span>
+<span class="fc" id="L186">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
