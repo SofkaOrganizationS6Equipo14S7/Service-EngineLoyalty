@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.loyalty.service_engine.application.dto.ClassificationResultTest
+-------------------------------------------------------------------------------
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.069 s -- in com.loyalty.service_engine.application.dto.ClassificationResultTest

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DiscountCappingEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">DiscountCappingEngine.java</span></div><h1>DiscountCappingEngine.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Motor de aplicación de topes (caps) y redondeo de moneda.
+ * 
+ * Responsabilidades:
+ * 1. Aplicar tope máximo de descuento (max_discount_cap)
+ * 2. Redondear a 2 decimales según regla configurada (ROUND_HALF_UP, FLOOR, CEIL)
+ * 3. Retornar información sobre si fue capeado y razón
+ */
+@Service
+<span class="fc" id="L20">@Slf4j</span>
+<span class="fc" id="L21">public class DiscountCappingEngine {</span>
+
+    /**
+     * Aplica tope máximo a descuento calculado
+     * 
+     * @param discountCalculated descuento antes de aplicar cap
+     * @param maxCap máximo permitido (null = sin límite)
+     * @return mapa con { applied, was_capped, cap_reason }
+     */
+    public CapResult applyCap(BigDecimal discountCalculated, BigDecimal maxCap) {
+<span class="fc bfc" id="L31" title="All 4 branches covered.">        if (maxCap == null || maxCap.compareTo(BigDecimal.ZERO) &lt;= 0) {</span>
+<span class="fc" id="L32">            log.debug(&quot;No cap limit configured, applying full discount: {}&quot;, discountCalculated);</span>
+<span class="fc" id="L33">            return new CapResult(discountCalculated, false, null);</span>
+        }
+
+<span class="fc bfc" id="L36" title="All 2 branches covered.">        if (discountCalculated.compareTo(maxCap) &lt;= 0) {</span>
+<span class="fc" id="L37">            log.debug(&quot;Discount within cap limit: discount={}, cap={}&quot;, discountCalculated, maxCap);</span>
+<span class="fc" id="L38">            return new CapResult(discountCalculated, false, null);</span>
+        }
+
+<span class="fc" id="L41">        log.info(&quot;Discount exceeds cap: calculated={}, cap={}, applied cap&quot;, discountCalculated, maxCap);</span>
+<span class="fc" id="L42">        return new CapResult(maxCap, true, &quot;max_discount_cap&quot;);</span>
+    }
+
+    /**
+     * Redondea monto monetario según regla configurada
+     * Se asume 2 decimales (moneda estándar: USD, COP, etc.)
+     * 
+     * @param amount monto a redondear
+     * @param roundingRule estrategia: ROUND_HALF_UP (default), FLOOR, CEIL
+     * @return monto redondeado
+     */
+    public BigDecimal applyRounding(BigDecimal amount, RoundingRule roundingRule) {
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (amount == null) {</span>
+<span class="fc" id="L55">            return null;</span>
+        }
+
+<span class="fc" id="L58">        RoundingMode mode = getRoundingMode(roundingRule);</span>
+<span class="fc" id="L59">        BigDecimal rounded = amount.setScale(2, mode);</span>
+        
+<span class="fc" id="L61">        log.debug(&quot;Applied rounding: original={}, rule={}, rounded={}&quot;, amount, roundingRule, rounded);</span>
+<span class="fc" id="L62">        return rounded;</span>
+    }
+
+    /**
+     * Mapea RoundingRule enum a RoundingMode de Java
+     */
+    private RoundingMode getRoundingMode(RoundingRule rule) {
+<span class="fc bfc" id="L69" title="All 2 branches covered.">        if (rule == null) {</span>
+<span class="fc" id="L70">            rule = RoundingRule.ROUND_HALF_UP;  // Default</span>
+        }
+
+<span class="pc bpc" id="L73" title="1 of 4 branches missed.">        return switch (rule) {</span>
+<span class="fc" id="L74">            case ROUND_HALF_UP -&gt; RoundingMode.HALF_UP;</span>
+<span class="fc" id="L75">            case FLOOR -&gt; RoundingMode.FLOOR;</span>
+<span class="fc" id="L76">            case CEIL -&gt; RoundingMode.CEILING;</span>
+<span class="nc" id="L77">            default -&gt; RoundingMode.HALF_UP;</span>
+        };
+    }
+
+    /**
+     * Resultado de aplicación de cap
+     */
+<span class="fc" id="L84">    public record CapResult(</span>
+        BigDecimal appliedDiscount,
+        boolean wasCapped,
+        String capReason  // null si no fue capeado
+    ) {}
+
+    /**
+     * Enum de estrategias de redondeo soportadas
+     */
+<span class="fc" id="L93">    public enum RoundingRule {</span>
+<span class="fc" id="L94">        ROUND_HALF_UP,  // 0.335 → 0.34 (default)</span>
+<span class="fc" id="L95">        FLOOR,          // 0.339 → 0.33</span>
+<span class="fc" id="L96">        CEIL            // 0.331 → 0.34</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClassificationMatrixStartupLoader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.infrastructure.startup</a> &gt; <span class="el_source">ClassificationMatrixStartupLoader.java</span></div><h1>ClassificationMatrixStartupLoader.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.infrastructure.startup;
+
+import com.loyalty.service_engine.application.dto.ClassificationRuleDTO;
+import com.loyalty.service_engine.application.dto.CustomerTierDTO;
+import com.loyalty.service_engine.application.service.ClassificationMatrixCaffeineCacheService;
+import com.loyalty.service_engine.domain.entity.ClassificationRuleReplicaEntity;
+import com.loyalty.service_engine.domain.entity.CustomerTierReplicaEntity;
+import com.loyalty.service_engine.domain.repository.ClassificationRuleReplicaRepository;
+import com.loyalty.service_engine.domain.repository.CustomerTierReplicaRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+/**
+ * Cold Start Loader for Classification Matrix.
+ *
+ * Responsibility:
+ * - Executes on application startup (ApplicationReadyEvent)
+ * - Loads all active tiers and rules from replica database tables
+ * - Populates Caffeine in-memory cache per ecommerce (1-hour TTL)
+ * - Guarantees Engine autonomy even if RabbitMQ events haven't arrived yet
+ *
+ * Why this matters:
+ * - Without this loader, Engine would fail on first /classify request after restart
+ * - With this loader, classification works immediately after startup
+ * - Replica tables are the fallback data source (populated by Admin via RabbitMQ events)
+ *
+ * Multi-tenant Strategy:
+ * - Loads ALL ecommerces that have tiers/rules in the replica database
+ * - Groups by ecommerce and loads each one separately
+ * - Supports independent cache invalidation per ecommerce
+ *
+ * Execution Order:
+ * - @EventListener(ApplicationReadyEvent.class) executes AFTER all @PostConstruct hooks
+ * - Ensures all Spring beans are fully initialized before we populate the cache
+ */
+<span class="fc" id="L44">@Slf4j</span>
+@Component
+@RequiredArgsConstructor
+public class ClassificationMatrixStartupLoader {
+
+    private final CustomerTierReplicaRepository tierReplicaRepository;
+    private final ClassificationRuleReplicaRepository ruleReplicaRepository;
+    private final ClassificationMatrixCaffeineCacheService cacheService;
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void loadClassificationMatrixOnStartup() {
+        try {
+<span class="fc" id="L56">            log.info(&quot;=== ClassificationMatrix Cold Start Loader ===&quot;);</span>
+<span class="fc" id="L57">            log.info(&quot;Loading customer tiers and rules for all ecommerces...&quot;);</span>
+
+            // Load all active tiers (regardless of ecommerce)
+<span class="fc" id="L60">            List&lt;CustomerTierReplicaEntity&gt; allTiers = tierReplicaRepository.findAll()</span>
+<span class="fc" id="L61">                .stream()</span>
+<span class="fc bfc" id="L62" title="All 4 branches covered.">                .filter(t -&gt; t.getIsActive() != null &amp;&amp; t.getIsActive())</span>
+<span class="fc" id="L63">                .collect(Collectors.toList());</span>
+
+            // Load all active rules (regardless of ecommerce)
+<span class="fc" id="L66">            List&lt;ClassificationRuleReplicaEntity&gt; allRules = ruleReplicaRepository.findAll()</span>
+<span class="fc" id="L67">                .stream()</span>
+<span class="fc bfc" id="L68" title="All 4 branches covered.">                .filter(r -&gt; r.getIsActive() != null &amp;&amp; r.getIsActive())</span>
+<span class="fc" id="L69">                .collect(Collectors.toList());</span>
+
+<span class="fc" id="L71">            log.info(&quot;Loaded {} total active tiers from database&quot;, allTiers.size());</span>
+<span class="fc" id="L72">            log.info(&quot;Loaded {} total active rules from database&quot;, allRules.size());</span>
+
+<span class="fc bfc" id="L74" title="All 4 branches covered.">            if (allTiers.isEmpty() &amp;&amp; allRules.isEmpty()) {</span>
+<span class="fc" id="L75">                log.warn(&quot;⚠ No active tiers or rules found in replica database - cache will be empty&quot;);</span>
+<span class="fc" id="L76">                return;</span>
+            }
+
+            // Group tiers by ecommerce
+<span class="fc" id="L80">            Map&lt;UUID, List&lt;CustomerTierReplicaEntity&gt;&gt; tiersByEcommerce = allTiers.stream()</span>
+<span class="fc" id="L81">                .collect(Collectors.groupingBy(CustomerTierReplicaEntity::getEcommerceId));</span>
+
+            // Group rules by ecommerce
+<span class="fc" id="L84">            Map&lt;UUID, List&lt;ClassificationRuleReplicaEntity&gt;&gt; rulesByEcommerce = allRules.stream()</span>
+<span class="fc" id="L85">                .collect(Collectors.groupingBy(ClassificationRuleReplicaEntity::getEcommerceId));</span>
+
+            // Combine ecommerce IDs from both tiers and rules
+<span class="fc" id="L88">            var allEcommerceIds = tiersByEcommerce.keySet().stream()</span>
+<span class="fc" id="L89">                .collect(Collectors.toSet());</span>
+<span class="fc" id="L90">            allEcommerceIds.addAll(rulesByEcommerce.keySet());</span>
+
+            // Load cache for each ecommerce
+<span class="fc" id="L93">            int successCount = 0;</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">            for (UUID ecommerceId : allEcommerceIds) {</span>
+                try {
+<span class="fc" id="L96">                    List&lt;CustomerTierReplicaEntity&gt; tiersList = tiersByEcommerce.getOrDefault(ecommerceId, List.of());</span>
+<span class="fc" id="L97">                    List&lt;ClassificationRuleReplicaEntity&gt; rulesList = rulesByEcommerce.getOrDefault(ecommerceId, List.of());</span>
+
+                    // Convert entities to DTOs
+<span class="fc" id="L100">                    List&lt;CustomerTierDTO&gt; tierDTOs = tiersList.stream()</span>
+<span class="fc" id="L101">                        .map(this::toTierDTO)</span>
+<span class="fc" id="L102">                        .collect(Collectors.toList());</span>
+
+<span class="fc" id="L104">                    List&lt;ClassificationRuleDTO&gt; ruleDTOs = rulesList.stream()</span>
+<span class="fc" id="L105">                        .map(this::toRuleDTO)</span>
+<span class="fc" id="L106">                        .collect(Collectors.toList());</span>
+
+                    // Populate cache for this ecommerce
+<span class="fc bfc" id="L109" title="All 2 branches covered.">                    if (!tierDTOs.isEmpty()) {</span>
+<span class="fc" id="L110">                        cacheService.putTiers(ecommerceId, tierDTOs);</span>
+<span class="fc" id="L111">                        log.debug(&quot;  ✓ Ecommerce {}: {} tiers cached&quot;, ecommerceId, tierDTOs.size());</span>
+                    }
+
+<span class="fc bfc" id="L114" title="All 2 branches covered.">                    if (!ruleDTOs.isEmpty()) {</span>
+<span class="fc" id="L115">                        cacheService.putRules(ecommerceId, ruleDTOs);</span>
+<span class="fc" id="L116">                        log.debug(&quot;  ✓ Ecommerce {}: {} rules cached&quot;, ecommerceId, ruleDTOs.size());</span>
+                    }
+
+<span class="fc" id="L119">                    successCount++;</span>
+<span class="fc" id="L120">                } catch (Exception e) {</span>
+<span class="fc" id="L121">                    log.error(&quot;Failed to load classification matrix for ecommerce {}&quot;, ecommerceId, e);</span>
+<span class="fc" id="L122">                }</span>
+<span class="fc" id="L123">            }</span>
+
+<span class="fc" id="L125">            log.info(&quot;✓ ClassificationMatrix Cold Start complete: {} ecommerces loaded, {} tiers, {} rules ready&quot;,</span>
+<span class="fc" id="L126">                successCount, allTiers.size(), allRules.size());</span>
+
+<span class="fc" id="L128">        } catch (Exception e) {</span>
+<span class="fc" id="L129">            log.error(&quot;ClassificationMatrix Cold Start failed - classification may not work until cache is populated via events&quot;, e);</span>
+<span class="fc" id="L130">        }</span>
+<span class="fc" id="L131">    }</span>
+
+    private CustomerTierDTO toTierDTO(CustomerTierReplicaEntity entity) {
+<span class="fc" id="L134">        return new CustomerTierDTO(</span>
+<span class="fc" id="L135">            entity.getId(),</span>
+<span class="fc" id="L136">            entity.getEcommerceId(),</span>
+<span class="fc" id="L137">            entity.getName(),</span>
+<span class="fc" id="L138">            entity.getDiscountPercentage(),</span>
+<span class="fc" id="L139">            entity.getHierarchyLevel(),</span>
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">            entity.getIsActive() != null ? entity.getIsActive() : false,</span>
+<span class="fc" id="L141">            entity.getSyncedAt()</span>
+        );
+    }
+
+    private ClassificationRuleDTO toRuleDTO(ClassificationRuleReplicaEntity entity) {
+<span class="fc" id="L146">        return new ClassificationRuleDTO(</span>
+<span class="fc" id="L147">            entity.getId(),</span>
+<span class="fc" id="L148">            entity.getEcommerceId(),</span>
+<span class="fc" id="L149">            entity.getName(),</span>
+<span class="fc" id="L150">            entity.getDiscountTypeCode(),</span>
+<span class="fc" id="L151">            entity.getDiscountType(),</span>
+<span class="fc" id="L152">            entity.getDiscountValue(),</span>
+<span class="fc" id="L153">            entity.getAppliedWith(),</span>
+<span class="fc" id="L154">            entity.getLogicConditions(),</span>
+<span class="fc" id="L155">            entity.getPriorityLevel(),</span>
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">            entity.getIsActive() != null ? entity.getIsActive() : false,</span>
+<span class="fc" id="L157">            entity.getSyncedAt()</span>
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

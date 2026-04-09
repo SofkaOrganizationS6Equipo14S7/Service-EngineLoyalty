@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClassificationRuleReplicaEntity.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.domain.entity</a> &gt; <span class="el_source">ClassificationRuleReplicaEntity.java</span></div><h1>ClassificationRuleReplicaEntity.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.domain.entity;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Read-only replica of classification rules from service-admin (engine_rules table).
+ * Stores dynamic evaluation criteria in JSONB logic_conditions for classification.
+ * Used for Cold Start autonomy and in-memory cache.
+ * Synchronized via RabbitMQ events &quot;classification-rules.updated&quot;.
+ */
+@Entity
+@Table(name = &quot;engine_rules&quot;, indexes = {
+    @Index(name = &quot;idx_engine_rules_ecommerce&quot;, columnList = &quot;ecommerce_id&quot;),
+    @Index(name = &quot;idx_engine_rules_type&quot;, columnList = &quot;discount_type_code&quot;),
+    @Index(name = &quot;idx_engine_rules_priority&quot;, columnList = &quot;ecommerce_id, priority_level&quot;),
+    @Index(name = &quot;idx_engine_rules_active&quot;, columnList = &quot;is_active&quot;),
+    @Index(name = &quot;idx_engine_rules_ecommerce_active&quot;, columnList = &quot;ecommerce_id, is_active&quot;)
+})
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class ClassificationRuleReplicaEntity {
+
+    @Id
+    private UUID id;
+
+    @Column(name = &quot;ecommerce_id&quot;, nullable = false)
+    private UUID ecommerceId;
+
+    @Column(nullable = false, length = 255)
+    private String name;
+
+    @Column(columnDefinition = &quot;TEXT&quot;)
+    private String description;
+
+    @Column(name = &quot;discount_type_code&quot;, nullable = false, length = 50)
+    private String discountTypeCode; // e.g., &quot;CLASSIFICATION&quot;
+
+    @Column(name = &quot;discount_type&quot;, nullable = false, length = 50)
+    private String discountType; // PERCENTAGE | FIXED_AMOUNT
+
+    @Column(name = &quot;discount_value&quot;, nullable = false)
+    private BigDecimal discountValue;
+
+    @Column(name = &quot;applied_with&quot;, nullable = false, length = 50)
+    private String appliedWith; // INDIVIDUAL | CUMULATIVE | EXCLUSIVE
+
+    @Column(name = &quot;logic_conditions&quot;, nullable = false, columnDefinition = &quot;jsonb&quot;)
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map&lt;String, Object&gt; logicConditions; // JSONB: {min_spent: {type: &quot;NUMERIC&quot;, value: 2000}, ...}
+
+    @Column(name = &quot;priority_level&quot;, nullable = false)
+    private Integer priorityLevel;
+
+    @Column(name = &quot;is_active&quot;, nullable = false)
+    private Boolean isActive = true;
+
+    @Column(name = &quot;synced_at&quot;, nullable = false)
+    private Instant syncedAt;
+
+    @Column(name = &quot;created_at&quot;, nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @Column(name = &quot;updated_at&quot;, nullable = false)
+    private Instant updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (createdAt == null) {</span>
+<span class="nc" id="L82">            createdAt = Instant.now();</span>
+        }
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (syncedAt == null) {</span>
+<span class="nc" id="L85">            syncedAt = Instant.now();</span>
+        }
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (updatedAt == null) {</span>
+<span class="nc" id="L88">            updatedAt = Instant.now();</span>
+        }
+<span class="nc bnc" id="L90" title="All 2 branches missed.">        if (isActive == null) {</span>
+<span class="nc" id="L91">            isActive = true;</span>
+        }
+<span class="nc" id="L93">    }</span>
+
+    @PreUpdate
+    protected void onUpdate() {
+<span class="nc" id="L97">        updatedAt = Instant.now();</span>
+<span class="nc" id="L98">        syncedAt = Instant.now();</span>
+<span class="nc" id="L99">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

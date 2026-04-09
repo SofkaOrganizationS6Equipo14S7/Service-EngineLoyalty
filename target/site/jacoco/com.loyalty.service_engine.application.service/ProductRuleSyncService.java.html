@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProductRuleSyncService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">ProductRuleSyncService.java</span></div><h1>ProductRuleSyncService.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import com.loyalty.service_engine.application.dto.ProductRuleEvent;
+import com.loyalty.service_engine.domain.entity.ProductRuleEntity;
+import com.loyalty.service_engine.domain.repository.ProductRuleRepository;
+import com.loyalty.service_engine.infrastructure.cache.ProductRuleCache;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Service for synchronizing Product Rules from Admin Service events
+ * 
+ * Responsibilities:
+ * - Consume RabbitMQ events (CREATE, UPDATE, DELETE)
+ * - Update local database replica
+ * - Invalidate/update Caffeine cache
+ */
+@Service
+<span class="fc" id="L23">@Slf4j</span>
+public class ProductRuleSyncService {
+    
+    private final ProductRuleRepository productRuleRepository;
+    private final ProductRuleCache productRuleCache;
+    
+    public ProductRuleSyncService(
+        ProductRuleRepository productRuleRepository,
+        ProductRuleCache productRuleCache
+<span class="fc" id="L32">    ) {</span>
+<span class="fc" id="L33">        this.productRuleRepository = productRuleRepository;</span>
+<span class="fc" id="L34">        this.productRuleCache = productRuleCache;</span>
+<span class="fc" id="L35">    }</span>
+    
+    /**
+     * Handle creation of a new product rule
+     * 
+     * @param event the RabbitMQ event from Admin Service
+     */
+    @Transactional
+    public void handleProductRuleCreated(ProductRuleEvent event) {
+<span class="fc" id="L44">        log.info(&quot;Syncing product rule creation: uid={} ecommerce={} productType={}&quot;, </span>
+<span class="fc" id="L45">            event.uid(), event.ecommerceId(), event.productType());</span>
+        
+        // Create entity
+<span class="fc" id="L48">        ProductRuleEntity entity = new ProductRuleEntity();</span>
+<span class="fc" id="L49">        entity.setUid(event.uid());</span>
+<span class="fc" id="L50">        entity.setEcommerceId(event.ecommerceId());</span>
+<span class="fc" id="L51">        entity.setName(event.name());</span>
+<span class="fc" id="L52">        entity.setProductType(event.productType());</span>
+<span class="fc" id="L53">        entity.setDiscountPercentage(event.discountPercentage());</span>
+<span class="fc" id="L54">        entity.setBenefit(event.benefit());</span>
+<span class="fc" id="L55">        entity.setIsActive(event.isActive());</span>
+<span class="fc" id="L56">        entity.setCreatedAt(event.timestamp());</span>
+<span class="fc" id="L57">        entity.setUpdatedAt(event.timestamp());</span>
+        
+        // Persist to local replica
+<span class="fc" id="L60">        productRuleRepository.save(entity);</span>
+        
+        // Invalidate cache for this product type
+<span class="fc" id="L63">        productRuleCache.invalidate(event.productType());</span>
+        
+<span class="fc" id="L65">        log.info(&quot;Product rule creation synced: uid={}&quot;, event.uid());</span>
+<span class="fc" id="L66">    }</span>
+    
+    /**
+     * Handle update of an existing product rule
+     * 
+     * @param event the RabbitMQ event from Admin Service
+     */
+    @Transactional
+    public void handleProductRuleUpdated(ProductRuleEvent event) {
+<span class="fc" id="L75">        log.info(&quot;Syncing product rule update: uid={} ecommerce={} productType={}&quot;, </span>
+<span class="fc" id="L76">            event.uid(), event.ecommerceId(), event.productType());</span>
+        
+        // Find existing rule
+<span class="fc" id="L79">        ProductRuleEntity entity = productRuleRepository.findByUid(event.uid())</span>
+<span class="fc" id="L80">            .orElseThrow(() -&gt; new RuntimeException(&quot;Product rule not found: &quot; + event.uid()));</span>
+        
+        // Update fields
+<span class="fc" id="L83">        entity.setName(event.name());</span>
+<span class="fc" id="L84">        entity.setDiscountPercentage(event.discountPercentage());</span>
+<span class="fc" id="L85">        entity.setBenefit(event.benefit());</span>
+<span class="fc" id="L86">        entity.setIsActive(event.isActive());</span>
+<span class="fc" id="L87">        entity.setUpdatedAt(event.timestamp());</span>
+        
+        // Persist
+<span class="fc" id="L90">        productRuleRepository.save(entity);</span>
+        
+        // Invalidate cache for this product type
+<span class="fc" id="L93">        productRuleCache.invalidate(event.productType());</span>
+        
+<span class="fc" id="L95">        log.info(&quot;Product rule update synced: uid={}&quot;, event.uid());</span>
+<span class="fc" id="L96">    }</span>
+    
+    /**
+     * Handle deletion (soft delete) of a product rule
+     * 
+     * @param event the RabbitMQ event from Admin Service
+     */
+    @Transactional
+    public void handleProductRuleDeleted(ProductRuleEvent event) {
+<span class="fc" id="L105">        log.info(&quot;Syncing product rule deletion: uid={} ecommerce={} productType={}&quot;, </span>
+<span class="fc" id="L106">            event.uid(), event.ecommerceId(), event.productType());</span>
+        
+        // Find existing rule
+<span class="fc" id="L109">        ProductRuleEntity entity = productRuleRepository.findByUid(event.uid())</span>
+<span class="fc" id="L110">            .orElseThrow(() -&gt; new RuntimeException(&quot;Product rule not found: &quot; + event.uid()));</span>
+        
+        // Soft delete
+<span class="fc" id="L113">        entity.setIsActive(false);</span>
+<span class="fc" id="L114">        entity.setUpdatedAt(event.timestamp());</span>
+        
+        // Persist
+<span class="fc" id="L117">        productRuleRepository.save(entity);</span>
+        
+        // Invalidate cache for this product type
+<span class="fc" id="L120">        productRuleCache.invalidate(event.productType());</span>
+        
+<span class="fc" id="L122">        log.info(&quot;Product rule deletion synced: uid={}&quot;, event.uid());</span>
+<span class="fc" id="L123">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

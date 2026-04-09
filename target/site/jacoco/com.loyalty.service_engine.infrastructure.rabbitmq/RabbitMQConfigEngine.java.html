@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RabbitMQConfigEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.infrastructure.rabbitmq</a> &gt; <span class="el_source">RabbitMQConfigEngine.java</span></div><h1>RabbitMQConfigEngine.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.infrastructure.rabbitmq;
+
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Queue;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * Configuración RabbitMQ para service-engine.
+ * 
+ * service-engine CONSUME eventos publicados por service-admin cuando
+ * cambian reglas de descuentos y API Keys.
+ * 
+ * Eventos:
+ * - discount.config.updated → configuración de límite máximo
+ */
+@Configuration
+<span class="nc" id="L20">public class RabbitMQConfigEngine {</span>
+    
+    /**
+     * Cola para recibir eventos de actualización de configuración de descuentos.
+     */
+    @Bean
+    public Queue discountConfigQueue() {
+<span class="nc" id="L27">        return new Queue(&quot;discount.config.queue&quot;, true);</span>
+    }
+
+    /**
+     * Cola para recibir eventos de actualización de prioridades.
+     */
+    @Bean
+    public Queue discountPriorityQueue() {
+<span class="nc" id="L35">        return new Queue(&quot;discount.priority.queue&quot;, true);</span>
+    }
+    
+    /**
+     * Exchange al cual se vincula la cola.
+     * Nota: Could be declared here or rely on auto-declaration, but being explicit is safer.
+     */
+    @Bean
+    public DirectExchange discountExchange() {
+<span class="nc" id="L44">        return new DirectExchange(&quot;discount-exchange&quot;, true, false);</span>
+    }
+    
+    /**
+     * Binding: discount.config.queue escucha mensajes con routing key
+     * &quot;discount.config.updated&quot; del exchange &quot;discount-exchange&quot;.
+     */
+    @Bean
+    public Binding discountConfigBinding(Queue discountConfigQueue, DirectExchange discountExchange) {
+<span class="nc" id="L53">        return BindingBuilder</span>
+<span class="nc" id="L54">            .bind(discountConfigQueue)</span>
+<span class="nc" id="L55">            .to(discountExchange)</span>
+<span class="nc" id="L56">            .with(&quot;discount.config.updated&quot;);</span>
+    }
+
+    /**
+     * Binding: discount.priority.queue escucha mensajes con routing key
+     * &quot;discount.priority.updated&quot;.
+     */
+    @Bean
+    public Binding discountPriorityBinding(Queue discountPriorityQueue, DirectExchange discountExchange) {
+<span class="nc" id="L65">        return BindingBuilder</span>
+<span class="nc" id="L66">            .bind(discountPriorityQueue)</span>
+<span class="nc" id="L67">            .to(discountExchange)</span>
+<span class="nc" id="L68">            .with(&quot;discount.priority.updated&quot;);</span>
+    }
+    
+    /**
+     * Dead Letter Queue para mensajes que no pudieron ser procesados.
+     */
+    @Bean
+    public Queue discountConfigDLQ() {
+<span class="nc" id="L76">        return new Queue(&quot;discount.config.dlq&quot;, true);</span>
+    }
+    
+    /**
+     * DLX para reenviar mensajes fallidos.
+     */
+    @Bean
+    public DirectExchange discountConfigDLX() {
+<span class="nc" id="L84">        return new DirectExchange(&quot;discount-dlx&quot;, true, false);</span>
+    }
+    
+    /**
+     * Binding de DLQ al DLX.
+     */
+    @Bean
+    public Binding discountConfigDLQBinding(Queue discountConfigDLQ, DirectExchange discountConfigDLX) {
+<span class="nc" id="L92">        return BindingBuilder</span>
+<span class="nc" id="L93">            .bind(discountConfigDLQ)</span>
+<span class="nc" id="L94">            .to(discountConfigDLX)</span>
+<span class="nc" id="L95">            .with(&quot;discount.config.dlq&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

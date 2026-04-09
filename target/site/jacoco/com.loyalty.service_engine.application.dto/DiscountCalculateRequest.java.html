@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DiscountCalculateRequest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.dto</a> &gt; <span class="el_source">DiscountCalculateRequest.java</span></div><h1>DiscountCalculateRequest.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.dto;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Request para calcular descuentos aplicando prioridad y límite máximo.
+ * Incluye información de cliente para clasificación de fidelidad.
+ * 
+ * @param transactionId ID único de la transacción
+ * @param clientFidelityPoints Puntos de fidelidad acumulados del cliente (para clasificación)
+ * @param ecommerceId Tenant identifier (para context)
+ * @param discounts Lista de descuentos identificados para la transacción
+ */
+<span class="nc" id="L16">public record DiscountCalculateRequest(</span>
+    String transactionId,
+    Integer clientFidelityPoints,
+    UUID ecommerceId,
+    List&lt;DiscountItem&gt; discounts
+) {
+    /**
+     * Representa un descuento individual a aplicar.
+     * @param discountType Tipo de descuento
+     * @param amount Monto del descuento
+     */
+<span class="nc" id="L27">    public record DiscountItem(</span>
+        String discountType,
+        BigDecimal amount
+    ) {}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

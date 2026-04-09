@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DiscountCalculationServiceV2.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">DiscountCalculationServiceV2.java</span></div><h1>DiscountCalculationServiceV2.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import com.loyalty.service_engine.application.dto.AppliedRuleDetail;
+import com.loyalty.service_engine.application.dto.ClassifyRequestV1;
+import com.loyalty.service_engine.application.dto.ClassificationResult;
+import com.loyalty.service_engine.application.dto.ClassificationRuleDTO;
+import com.loyalty.service_engine.application.dto.DiscountCalculateRequestV2;
+import com.loyalty.service_engine.application.dto.DiscountCalculateResponseV2;
+import com.loyalty.service_engine.domain.entity.EngineDiscountSettingsEntity;
+import com.loyalty.service_engine.domain.repository.EngineDiscountSettingsRepository;
+import com.loyalty.service_engine.infrastructure.exception.InvalidCartException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+/**
+ * Servicio de cálculo de descuentos con clasificación automática de fidelidad.
+ * Integra el ClassificationEngine para asignar un tier de fidelidad durante el cálculo.
+ */
+@Service
+<span class="fc" id="L32">@Slf4j</span>
+@RequiredArgsConstructor
+public class DiscountCalculationServiceV2 {
+
+    private final FidelityClassificationService fidelityClassificationService;
+    private final ClassificationMatrixCaffeineCacheService cacheService;
+    private final DiscountCappingEngine discountCappingEngine;
+    private final TransactionLogWriter transactionLogWriter;
+    private final EngineDiscountSettingsRepository engineDiscountSettingsRepository;
+
+    @Transactional
+    public DiscountCalculateResponseV2 calculate(DiscountCalculateRequestV2 request) {
+<span class="fc" id="L44">        log.info(&quot;Starting cart calculation: ecommerceId={}, externalOrderId={}&quot;,</span>
+<span class="fc" id="L45">            request.ecommerceId(), request.externalOrderId());</span>
+
+<span class="fc" id="L47">        validateRequest(request);</span>
+<span class="fc" id="L48">        BigDecimal subtotal = calculateSubtotal(request);</span>
+
+<span class="fc" id="L50">        String customerTier = classifyCustomer(request);</span>
+        
+        // Obtener reglas de clasificación activas desde cache
+<span class="fc" id="L53">        List&lt;AppliedRuleDetail&gt; evaluatedRules = cacheService.getRules(request.ecommerceId())</span>
+<span class="fc" id="L54">            .orElse(List.of())</span>
+<span class="fc" id="L55">            .stream()</span>
+<span class="fc" id="L56">            .filter(ClassificationRuleDTO::isActive)</span>
+<span class="fc" id="L57">            .map(rule -&gt; new AppliedRuleDetail(</span>
+<span class="fc" id="L58">                rule.id(),</span>
+<span class="fc" id="L59">                rule.name(),</span>
+<span class="fc" id="L60">                rule.discountTypeCode(),</span>
+<span class="fc" id="L61">                rule.discountType(),</span>
+<span class="fc" id="L62">                rule.appliedWith(),</span>
+                null,
+<span class="fc" id="L64">                calculateRuleDiscountFromDTO(rule, subtotal),</span>
+<span class="fc" id="L65">                rule.priorityLevel()</span>
+            ))
+<span class="fc" id="L67">            .collect(Collectors.toList());</span>
+
+<span class="fc" id="L69">        List&lt;AppliedRuleDetail&gt; selectedRules = applyStackingPolicy(request.ecommerceId(), evaluatedRules);</span>
+<span class="fc" id="L70">        BigDecimal discountCalculated = selectedRules.stream()</span>
+<span class="fc" id="L71">            .map(AppliedRuleDetail::discountAmount)</span>
+<span class="fc" id="L72">            .reduce(BigDecimal.ZERO, BigDecimal::add);</span>
+
+<span class="fc" id="L74">        BigDecimal maxCap = resolveMaxDiscountCap(request.ecommerceId());</span>
+<span class="fc" id="L75">        DiscountCappingEngine.CapResult capResult = discountCappingEngine.applyCap(discountCalculated, maxCap);</span>
+
+<span class="fc" id="L77">        BigDecimal discountApplied = capResult.appliedDiscount().min(subtotal);</span>
+<span class="fc bfc" id="L78" title="All 4 branches covered.">        boolean wasCapped = capResult.wasCapped() || capResult.appliedDiscount().compareTo(subtotal) &gt; 0;</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        String capReason = capResult.appliedDiscount().compareTo(subtotal) &gt; 0</span>
+<span class="fc" id="L80">            ? &quot;subtotal_limit&quot;</span>
+<span class="fc" id="L81">            : capResult.capReason();</span>
+
+<span class="fc" id="L83">        BigDecimal discountCalculatedRounded = applyRounding(discountCalculated);</span>
+<span class="fc" id="L84">        BigDecimal discountAppliedRounded = applyRounding(discountApplied);</span>
+<span class="fc" id="L85">        BigDecimal finalAmount = applyRounding(subtotal.subtract(discountAppliedRounded));</span>
+
+<span class="fc" id="L87">        DiscountCalculateResponseV2 draft = new DiscountCalculateResponseV2(</span>
+            subtotal,
+            discountCalculatedRounded,
+            discountAppliedRounded,
+            finalAmount,
+            customerTier,
+<span class="fc" id="L93">            wasCapped,</span>
+            capReason,
+            selectedRules,
+            null,
+<span class="fc" id="L97">            Instant.now()</span>
+        );
+
+<span class="fc" id="L100">        UUID transactionId = transactionLogWriter.writeLog(request, draft);</span>
+<span class="fc" id="L101">        return new DiscountCalculateResponseV2(</span>
+<span class="fc" id="L102">            draft.subtotalAmount(),</span>
+<span class="fc" id="L103">            draft.discountCalculated(),</span>
+<span class="fc" id="L104">            draft.discountApplied(),</span>
+<span class="fc" id="L105">            draft.finalAmount(),</span>
+<span class="fc" id="L106">            draft.customerTier(),</span>
+<span class="fc" id="L107">            draft.wasCapped(),</span>
+<span class="fc" id="L108">            draft.capReason(),</span>
+<span class="fc" id="L109">            draft.appliedRules(),</span>
+            transactionId,
+<span class="fc" id="L111">            draft.calculatedAt()</span>
+        );
+    }
+
+    /**
+     * Clasifica cliente usando el servicio determinístico por ecommerce.
+     */
+    private String classifyCustomer(DiscountCalculateRequestV2 request) {
+        try {
+<span class="fc" id="L120">            ClassifyRequestV1 classificationRequest = new ClassifyRequestV1(</span>
+<span class="fc" id="L121">                request.totalSpent(),</span>
+<span class="fc" id="L122">                request.orderCount(),</span>
+<span class="fc" id="L123">                request.membershipDays(),</span>
+                null
+            );
+<span class="fc" id="L126">            ClassificationResult classification = fidelityClassificationService.classify(</span>
+<span class="fc" id="L127">                request.ecommerceId(),</span>
+                classificationRequest
+            );
+<span class="fc" id="L130">            return classification.getTierName().orElse(&quot;UNCLASSIFIED&quot;);</span>
+<span class="fc" id="L131">        } catch (Exception e) {</span>
+<span class="fc" id="L132">            log.warn(&quot;Customer classification unavailable for ecommerceId={}. Fallback tier used.&quot;,</span>
+<span class="fc" id="L133">                request.ecommerceId(), e);</span>
+<span class="fc" id="L134">            return &quot;UNCLASSIFIED&quot;;</span>
+        }
+    }
+
+    private void validateRequest(DiscountCalculateRequestV2 request) {
+<span class="fc bfc" id="L139" title="All 4 branches covered.">        if (request.items() == null || request.items().isEmpty()) {</span>
+<span class="fc" id="L140">            throw new InvalidCartException(&quot;Carrito sin items&quot;);</span>
+        }
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        for (var item : request.items()) {</span>
+<span class="fc bfc" id="L143" title="All 4 branches covered.">            if (item.quantity() == null || item.quantity() &lt;= 0) {</span>
+<span class="fc" id="L144">                throw new InvalidCartException(&quot;Carrito con quantity invalida&quot;);</span>
+            }
+<span class="fc bfc" id="L146" title="All 4 branches covered.">            if (item.unitPrice() == null || item.unitPrice().signum() &lt; 0) {</span>
+<span class="fc" id="L147">                throw new InvalidCartException(&quot;Carrito con unit_price invalido&quot;);</span>
+            }
+<span class="fc" id="L149">        }</span>
+<span class="fc" id="L150">    }</span>
+
+    private BigDecimal calculateSubtotal(DiscountCalculateRequestV2 request) {
+<span class="fc" id="L153">        BigDecimal subtotal = request.items().stream()</span>
+<span class="fc" id="L154">            .map(item -&gt; item.unitPrice().multiply(BigDecimal.valueOf(item.quantity())))</span>
+<span class="fc" id="L155">            .reduce(BigDecimal.ZERO, BigDecimal::add);</span>
+<span class="fc" id="L156">        return subtotal.setScale(4, RoundingMode.HALF_UP);</span>
+    }
+
+    private List&lt;AppliedRuleDetail&gt; applyStackingPolicy(UUID ecommerceId, List&lt;AppliedRuleDetail&gt; rules) {
+<span class="pc bpc" id="L160" title="1 of 4 branches missed.">        if (rules == null || rules.isEmpty()) {</span>
+<span class="fc" id="L161">            return List.of();</span>
+        }
+
+<span class="fc" id="L164">        List&lt;AppliedRuleDetail&gt; sortedRules = rules.stream()</span>
+<span class="fc" id="L165">            .sorted(Comparator.comparing(AppliedRuleDetail::priorityLevel, Comparator.nullsLast(Integer::compareTo)))</span>
+<span class="fc" id="L166">            .collect(Collectors.toCollection(ArrayList::new));</span>
+
+<span class="fc" id="L168">        List&lt;AppliedRuleDetail&gt; exclusiveRules = sortedRules.stream()</span>
+<span class="fc" id="L169">            .filter(rule -&gt; &quot;EXCLUSIVE&quot;.equals(normalize(rule.appliedWith())))</span>
+<span class="fc" id="L170">            .toList();</span>
+
+<span class="fc bfc" id="L172" title="All 2 branches covered.">        if (!exclusiveRules.isEmpty()) {</span>
+<span class="fc" id="L173">            AppliedRuleDetail highestExclusive = exclusiveRules.stream()</span>
+<span class="fc" id="L174">                .max(Comparator.comparing(AppliedRuleDetail::discountAmount))</span>
+<span class="fc" id="L175">                .orElse(exclusiveRules.get(0));</span>
+<span class="fc" id="L176">            return List.of(highestExclusive);</span>
+        }
+
+<span class="fc" id="L179">        boolean allowStacking = resolveAllowStacking(ecommerceId);</span>
+<span class="pc bpc" id="L180" title="1 of 2 branches missed.">        if (!allowStacking) {</span>
+<span class="nc" id="L181">            AppliedRuleDetail highestRule = sortedRules.stream()</span>
+<span class="nc" id="L182">                .max(Comparator.comparing(AppliedRuleDetail::discountAmount))</span>
+<span class="nc" id="L183">                .orElse(sortedRules.get(0));</span>
+<span class="nc" id="L184">            return List.of(highestRule);</span>
+        }
+
+<span class="fc" id="L187">        return sortedRules;</span>
+    }
+
+    private BigDecimal calculateRuleDiscountFromDTO(ClassificationRuleDTO rule, BigDecimal subtotal) {
+<span class="pc bpc" id="L191" title="2 of 4 branches missed.">        if (rule == null || rule.discountValue() == null) {</span>
+<span class="nc" id="L192">            return BigDecimal.ZERO;</span>
+        }
+<span class="fc bfc" id="L194" title="All 2 branches covered.">        if (&quot;PERCENTAGE&quot;.equals(rule.discountType())) {</span>
+<span class="fc" id="L195">            return subtotal.multiply(rule.discountValue()).divide(BigDecimal.valueOf(100), 4, java.math.RoundingMode.HALF_UP);</span>
+        }
+<span class="fc" id="L197">        return rule.discountValue().min(subtotal);</span>
+    }
+
+    private BigDecimal resolveMaxDiscountCap(UUID ecommerceId) {
+<span class="fc" id="L201">        return engineDiscountSettingsRepository.findByEcommerceIdAndIsActiveTrue(ecommerceId)</span>
+<span class="fc" id="L202">            .map(EngineDiscountSettingsEntity::getMaxDiscountLimit)</span>
+<span class="pc bpc" id="L203" title="1 of 2 branches missed.">            .filter(limit -&gt; limit.signum() &gt; 0)</span>
+<span class="fc" id="L204">            .orElse(null);</span>
+    }
+
+    private boolean resolveAllowStacking(UUID ecommerceId) {
+        // Mientras allow_stacking no esté replicado en entidad, se usa default TRUE.
+<span class="fc" id="L209">        return true;</span>
+    }
+
+    private BigDecimal applyRounding(BigDecimal value) {
+<span class="fc" id="L213">        return discountCappingEngine.applyRounding(value, DiscountCappingEngine.RoundingRule.ROUND_HALF_UP);</span>
+    }
+
+    private String normalize(String value) {
+<span class="pc bpc" id="L217" title="1 of 2 branches missed.">        return value == null ? &quot;&quot; : value.trim().toUpperCase(Locale.ROOT);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClassificationRuleEventConsumer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.infrastructure.rabbitmq</a> &gt; <span class="el_source">ClassificationRuleEventConsumer.java</span></div><h1>ClassificationRuleEventConsumer.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.infrastructure.rabbitmq;
+
+import com.loyalty.service_engine.application.service.ClassificationMatrixCaffeineCacheService;
+import com.loyalty.service_engine.domain.entity.ClassificationRuleReplicaEntity;
+import com.loyalty.service_engine.domain.repository.ClassificationRuleReplicaRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Consumes classification rule events published by Admin Service.
+ * Updates the in-memory Caffeine cache and replica database to keep Engine in sync.
+ *
+ * Event flow:
+ * Admin Service (source of truth) → RabbitMQ → Engine Service (listener) → DB replica + Caffeine Cache
+ *
+ * Three paths:
+ * 1. RuleCreated: Add new rule to DB replica and invalidate cache for ecommerce
+ * 2. RuleUpdated: Update rule in DB replica and invalidate cache for ecommerce
+ * 3. RuleDeleted: Soft-delete rule in DB replica and invalidate cache for ecommerce
+ *
+ * Event payload structure:
+ * {
+ *   &quot;ruleId&quot;: &quot;uuid&quot;,
+ *   &quot;ecommerceId&quot;: &quot;uuid&quot;,
+ *   &quot;name&quot;: &quot;Gold Tier Rule&quot;,
+ *   &quot;discountTypeCode&quot;: &quot;CLASSIFICATION&quot;,
+ *   &quot;discountType&quot;: &quot;PERCENTAGE&quot;,
+ *   &quot;discountValue&quot;: 10.0,
+ *   &quot;appliedWith&quot;: &quot;INDIVIDUAL&quot;,
+ *   &quot;logicConditions&quot;: { &quot;min_spent&quot;: {...}, ... },
+ *   &quot;priorityLevel&quot;: 1,
+ *   &quot;isActive&quot;: true,
+ *   &quot;eventType&quot;: &quot;CREATED|UPDATED|DELETED&quot;
+ * }
+ */
+<span class="fc" id="L44">@Slf4j</span>
+@Component
+@RequiredArgsConstructor
+public class ClassificationRuleEventConsumer {
+
+    private final ClassificationRuleReplicaRepository ruleReplicaRepo;
+    private final ClassificationMatrixCaffeineCacheService cacheService;
+
+    @RabbitListener(queues = &quot;${rabbitmq.queue.classification-rules:classification-rules.queue}&quot;)
+    public void handleRuleEvent(ClassificationRuleEvent event) {
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (event == null) {</span>
+<span class="fc" id="L55">            log.warn(&quot;Received null rule event&quot;);</span>
+<span class="fc" id="L56">            return;</span>
+        }
+
+        try {
+<span class="fc bfc" id="L60" title="All 4 branches covered.">            switch (event.eventType().toUpperCase()) {</span>
+                case &quot;CREATED&quot;:
+<span class="fc" id="L62">                    handleRuleCreated(event);</span>
+<span class="fc" id="L63">                    break;</span>
+                case &quot;UPDATED&quot;:
+<span class="fc" id="L65">                    handleRuleUpdated(event);</span>
+<span class="fc" id="L66">                    break;</span>
+                case &quot;DELETED&quot;:
+<span class="fc" id="L68">                    handleRuleDeleted(event);</span>
+<span class="fc" id="L69">                    break;</span>
+                default:
+<span class="fc" id="L71">                    log.warn(&quot;Unknown rule event type: {}&quot;, event.eventType());</span>
+<span class="fc" id="L72">                    return;</span>
+            }
+
+            // Invalidate cache for this ecommerce
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">            if (event.ecommerceId() != null) {</span>
+<span class="fc" id="L77">                cacheService.invalidateEcommerce(event.ecommerceId());</span>
+<span class="fc" id="L78">                log.debug(&quot;Cache invalidated for ecommerce: {} after {} event&quot;, event.ecommerceId(), event.eventType());</span>
+            }
+
+<span class="nc" id="L81">        } catch (Exception e) {</span>
+<span class="nc" id="L82">            log.error(&quot;Error processing rule event: {}&quot;, event, e);</span>
+<span class="fc" id="L83">        }</span>
+<span class="fc" id="L84">    }</span>
+
+    private void handleRuleCreated(ClassificationRuleEvent event) {
+<span class="fc" id="L87">        log.info(&quot;Creating classification rule: id={}, ecommerce={}, name={}&quot;, </span>
+<span class="fc" id="L88">            event.ruleId(), event.ecommerceId(), event.name());</span>
+
+<span class="fc" id="L90">        ClassificationRuleReplicaEntity replica = new ClassificationRuleReplicaEntity(</span>
+<span class="fc" id="L91">            event.ruleId(),</span>
+<span class="fc" id="L92">            event.ecommerceId(),</span>
+<span class="fc" id="L93">            event.name(),</span>
+<span class="fc" id="L94">            event.description(),</span>
+<span class="fc" id="L95">            event.discountTypeCode(),</span>
+<span class="fc" id="L96">            event.discountType(),</span>
+<span class="fc" id="L97">            event.discountValue(),</span>
+<span class="fc" id="L98">            event.appliedWith(),</span>
+<span class="fc" id="L99">            event.logicConditions(),</span>
+<span class="fc" id="L100">            event.priorityLevel(),</span>
+<span class="fc" id="L101">            true,</span>
+<span class="fc" id="L102">            Instant.now(),</span>
+<span class="fc" id="L103">            Instant.now(),</span>
+<span class="fc" id="L104">            Instant.now()</span>
+        );
+
+<span class="fc" id="L107">        ruleReplicaRepo.save(replica);</span>
+<span class="fc" id="L108">        log.info(&quot;Rule created in replica: id={}&quot;, event.ruleId());</span>
+<span class="fc" id="L109">    }</span>
+
+    private void handleRuleUpdated(ClassificationRuleEvent event) {
+<span class="fc" id="L112">        log.info(&quot;Updating classification rule: id={}, ecommerce={}&quot;, event.ruleId(), event.ecommerceId());</span>
+
+<span class="fc" id="L114">        Optional&lt;ClassificationRuleReplicaEntity&gt; existing = ruleReplicaRepo.findById(event.ruleId());</span>
+
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        if (existing.isPresent()) {</span>
+<span class="fc" id="L117">            ClassificationRuleReplicaEntity entity = existing.get();</span>
+<span class="fc" id="L118">            entity.setName(event.name());</span>
+<span class="fc" id="L119">            entity.setDescription(event.description());</span>
+<span class="fc" id="L120">            entity.setDiscountTypeCode(event.discountTypeCode());</span>
+<span class="fc" id="L121">            entity.setDiscountType(event.discountType());</span>
+<span class="fc" id="L122">            entity.setDiscountValue(event.discountValue());</span>
+<span class="fc" id="L123">            entity.setAppliedWith(event.appliedWith());</span>
+<span class="fc" id="L124">            entity.setLogicConditions(event.logicConditions());</span>
+<span class="fc" id="L125">            entity.setPriorityLevel(event.priorityLevel());</span>
+<span class="fc" id="L126">            entity.setIsActive(event.isActive());</span>
+<span class="fc" id="L127">            entity.setSyncedAt(Instant.now());</span>
+<span class="fc" id="L128">            entity.setUpdatedAt(Instant.now());</span>
+
+<span class="fc" id="L130">            ruleReplicaRepo.save(entity);</span>
+<span class="fc" id="L131">            log.info(&quot;Rule updated in replica: id={}&quot;, event.ruleId());</span>
+<span class="fc" id="L132">        } else {</span>
+<span class="fc" id="L133">            log.warn(&quot;Rule not found for update: id={}&quot;, event.ruleId());</span>
+            // Treat as create if not exists
+<span class="fc" id="L135">            handleRuleCreated(event);</span>
+        }
+<span class="fc" id="L137">    }</span>
+
+    private void handleRuleDeleted(ClassificationRuleEvent event) {
+<span class="fc" id="L140">        log.info(&quot;Soft-deleting classification rule: id={}&quot;, event.ruleId());</span>
+
+<span class="fc" id="L142">        Optional&lt;ClassificationRuleReplicaEntity&gt; existing = ruleReplicaRepo.findById(event.ruleId());</span>
+
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (existing.isPresent()) {</span>
+<span class="fc" id="L145">            ClassificationRuleReplicaEntity entity = existing.get();</span>
+<span class="fc" id="L146">            entity.setIsActive(false);</span>
+<span class="fc" id="L147">            entity.setSyncedAt(Instant.now());</span>
+<span class="fc" id="L148">            entity.setUpdatedAt(Instant.now());</span>
+
+<span class="fc" id="L150">            ruleReplicaRepo.save(entity);</span>
+<span class="fc" id="L151">            log.info(&quot;Rule soft-deleted in replica: id={}&quot;, event.ruleId());</span>
+<span class="fc" id="L152">        } else {</span>
+<span class="fc" id="L153">            log.warn(&quot;Rule not found for deletion: id={}&quot;, event.ruleId());</span>
+        }
+<span class="fc" id="L155">    }</span>
+
+    /**
+     * Event payload for classification rule synchronization from Admin Service.
+     */
+<span class="fc" id="L160">    public record ClassificationRuleEvent(</span>
+        String eventType,
+        UUID ruleId,
+        UUID ecommerceId,
+        String name,
+        String description,
+        String discountTypeCode,
+        String discountType,
+        BigDecimal discountValue,
+        String appliedWith,
+        Map&lt;String, Object&gt; logicConditions,
+        Integer priorityLevel,
+        boolean isActive
+    ) {}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

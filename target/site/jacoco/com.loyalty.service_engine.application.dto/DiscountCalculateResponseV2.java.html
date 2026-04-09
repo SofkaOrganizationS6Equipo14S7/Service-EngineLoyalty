@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DiscountCalculateResponseV2.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.dto</a> &gt; <span class="el_source">DiscountCalculateResponseV2.java</span></div><h1>DiscountCalculateResponseV2.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.dto;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * DTO para response de cálculo de descuentos
+ * Contiene breakdown completo de subtotal, descuentos, caps y reglas aplicadas
+ * 
+ * @param subtotalAmount Monto subtotal del carrito (suma de quantity * unitPrice)
+ * @param discountCalculated Descuento calculado antes de aplicar cap
+ * @param discountApplied Descuento final después de aplicar cap
+ * @param finalAmount Monto final (subtotal - discountApplied)
+ * @param customerTier Tier de clasificación del cliente (ej. &quot;Gold&quot;)
+ * @param wasCapped true si se limitó descuento por max_discount_cap
+ * @param capReason Razón del cap (&quot;max_discount_cap&quot; o null)
+ * @param appliedRules Desglose de reglas aplicadas
+ * @param transactionId ID del registro en transaction_logs para auditoría
+ * @param calculatedAt Timestamp del cálculo
+ */
+<span class="fc" id="L23">public record DiscountCalculateResponseV2(</span>
+    BigDecimal subtotalAmount,
+    BigDecimal discountCalculated,
+    BigDecimal discountApplied,
+    BigDecimal finalAmount,
+    String customerTier,
+    Boolean wasCapped,
+    String capReason,
+    List&lt;AppliedRuleDetail&gt; appliedRules,
+    UUID transactionId,
+    Instant calculatedAt
+) {
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

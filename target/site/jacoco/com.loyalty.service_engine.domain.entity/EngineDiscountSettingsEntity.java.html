@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EngineDiscountSettingsEntity.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.domain.entity</a> &gt; <span class="el_source">EngineDiscountSettingsEntity.java</span></div><h1>EngineDiscountSettingsEntity.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.domain.entity;
+
+import jakarta.persistence.*;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = &quot;engine_discount_settings&quot;)
+public class EngineDiscountSettingsEntity {
+
+    @Id
+    @Column(name = &quot;ecommerce_id&quot;)
+    private UUID ecommerceId;
+
+    @Column(name = &quot;max_discount_cap&quot;, nullable = false, precision = 12, scale = 4)
+    private BigDecimal maxDiscountCap;
+
+    @Column(name = &quot;currency_code&quot;, nullable = false, length = 3)
+    private String currencyCode;
+
+<span class="fc" id="L22">    @Column(name = &quot;allow_stacking&quot;, nullable = false)</span>
+<span class="fc" id="L23">    private Boolean allowStacking = true;</span>
+
+<span class="fc" id="L25">    @Column(name = &quot;rounding_rule&quot;, nullable = false, length = 20)</span>
+    private String roundingRule = &quot;ROUND_HALF_UP&quot;;
+
+<span class="fc" id="L28">    @Column(name = &quot;is_active&quot;, nullable = false)</span>
+<span class="fc" id="L29">    private Boolean isActive = true;</span>
+
+    @Column(name = &quot;synced_at&quot;)
+    private Instant syncedAt;
+
+    @Column(name = &quot;created_at&quot;)
+    private Instant createdAt;
+
+    @Column(name = &quot;updated_at&quot;)
+    private Instant updatedAt;
+
+<span class="fc" id="L40">    public EngineDiscountSettingsEntity() {}</span>
+
+<span class="nc" id="L42">    public UUID getEcommerceId() { return ecommerceId; }</span>
+<span class="nc" id="L43">    public void setEcommerceId(UUID ecommerceId) { this.ecommerceId = ecommerceId; }</span>
+<span class="nc" id="L44">    public BigDecimal getMaxDiscountCap() { return maxDiscountCap; }</span>
+<span class="fc" id="L45">    public void setMaxDiscountCap(BigDecimal maxDiscountCap) { this.maxDiscountCap = maxDiscountCap; }</span>
+<span class="fc" id="L46">    public BigDecimal getMaxDiscountLimit() { return maxDiscountCap; }</span>
+<span class="nc" id="L47">    public String getCurrencyCode() { return currencyCode; }</span>
+<span class="nc" id="L48">    public void setCurrencyCode(String currencyCode) { this.currencyCode = currencyCode; }</span>
+<span class="nc" id="L49">    public Boolean getAllowStacking() { return allowStacking; }</span>
+<span class="nc" id="L50">    public void setAllowStacking(Boolean allowStacking) { this.allowStacking = allowStacking; }</span>
+<span class="nc" id="L51">    public String getRoundingRule() { return roundingRule; }</span>
+<span class="nc" id="L52">    public void setRoundingRule(String roundingRule) { this.roundingRule = roundingRule; }</span>
+<span class="nc" id="L53">    public Boolean getIsActive() { return isActive; }</span>
+<span class="fc" id="L54">    public void setIsActive(Boolean isActive) { this.isActive = isActive; }</span>
+<span class="nc" id="L55">    public Instant getSyncedAt() { return syncedAt; }</span>
+<span class="nc" id="L56">    public void setSyncedAt(Instant syncedAt) { this.syncedAt = syncedAt; }</span>
+<span class="nc" id="L57">    public Instant getCreatedAt() { return createdAt; }</span>
+<span class="nc" id="L58">    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }</span>
+<span class="nc" id="L59">    public Instant getUpdatedAt() { return updatedAt; }</span>
+<span class="nc" id="L60">    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

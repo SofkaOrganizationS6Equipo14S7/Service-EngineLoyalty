@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.loyalty.service_engine.application.service.DiscountCappingEngineTest
+-------------------------------------------------------------------------------
+Tests run: 0, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.099 s -- in com.loyalty.service_engine.application.service.DiscountCappingEngineTest

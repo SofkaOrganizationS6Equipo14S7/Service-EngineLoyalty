@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProductRuleEventListener.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.infrastructure.rabbitmq</a> &gt; <span class="el_source">ProductRuleEventListener.java</span></div><h1>ProductRuleEventListener.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.infrastructure.rabbitmq;
+
+import com.loyalty.service_engine.application.dto.ProductRuleEvent;
+import com.loyalty.service_engine.application.service.ProductRuleSyncService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.stereotype.Component;
+
+/**
+ * RabbitMQ listener for Product Rule events from Admin Service
+ * 
+ * Listens to:
+ * - Queue: engine-service.product-rules
+ * - Exchange: product-rules.exchange (topic)
+ * - Routing keys: product.rules.*
+ */
+@Component
+<span class="fc" id="L19">@Slf4j</span>
+public class ProductRuleEventListener {
+    
+    private final ProductRuleSyncService productRuleSyncService;
+    
+<span class="fc" id="L24">    public ProductRuleEventListener(ProductRuleSyncService productRuleSyncService) {</span>
+<span class="fc" id="L25">        this.productRuleSyncService = productRuleSyncService;</span>
+<span class="fc" id="L26">    }</span>
+    
+    /**
+     * Listen for product rule events from Admin Service
+     * 
+     * @param event the product rule event
+     * @param eventType the event type from message header
+     */
+    @RabbitListener(queues = &quot;${rabbitmq.queue.product-rules:engine-service.product-rules}&quot;)
+    public void onProductRuleEvent(
+        ProductRuleEvent event,
+        @Header(value = &quot;x-event-type&quot;, required = false) String eventType
+    ) {
+        try {
+<span class="fc" id="L40">            log.info(&quot;event=product_rule_received eventType={} ruleUid={} ecommerceId={}&quot;, </span>
+<span class="fc" id="L41">                event.eventType(), event.uid(), event.ecommerceId());</span>
+            
+            // Route to appropriate handler based on event type
+<span class="fc bfc" id="L44" title="All 4 branches covered.">            switch (event.eventType()) {</span>
+                case &quot;PRODUCT_RULE_CREATED&quot;:
+<span class="fc" id="L46">                    productRuleSyncService.handleProductRuleCreated(event);</span>
+<span class="fc" id="L47">                    log.info(&quot;event=product_rule_created_processed ruleUid={}&quot;, event.uid());</span>
+<span class="fc" id="L48">                    break;</span>
+                    
+                case &quot;PRODUCT_RULE_UPDATED&quot;:
+<span class="fc" id="L51">                    productRuleSyncService.handleProductRuleUpdated(event);</span>
+<span class="fc" id="L52">                    log.info(&quot;event=product_rule_updated_processed ruleUid={}&quot;, event.uid());</span>
+<span class="fc" id="L53">                    break;</span>
+                    
+                case &quot;PRODUCT_RULE_DELETED&quot;:
+<span class="fc" id="L56">                    productRuleSyncService.handleProductRuleDeleted(event);</span>
+<span class="fc" id="L57">                    log.info(&quot;event=product_rule_deleted_processed ruleUid={}&quot;, event.uid());</span>
+<span class="fc" id="L58">                    break;</span>
+                    
+                default:
+<span class="fc" id="L61">                    log.warn(&quot;event=unknown_product_rule_event eventType={} ruleUid={}&quot;, </span>
+<span class="fc" id="L62">                        event.eventType(), event.uid());</span>
+            }
+<span class="fc" id="L64">        } catch (Exception e) {</span>
+<span class="fc" id="L65">            log.error(&quot;event=product_rule_event_processing_failed eventType={} ruleUid={}&quot;, </span>
+<span class="fc" id="L66">                event.eventType(), event.uid(), e);</span>
+            // Intentionally not throwing exception - let RabbitMQ handle requeue if needed
+            // Or implement a DLX handler for failed messages
+<span class="fc" id="L69">        }</span>
+<span class="fc" id="L70">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

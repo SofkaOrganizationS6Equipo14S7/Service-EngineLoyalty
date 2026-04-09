@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionLogWriter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">TransactionLogWriter.java</span></div><h1>TransactionLogWriter.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.loyalty.service_engine.application.dto.AppliedRuleDetail;
+import com.loyalty.service_engine.application.dto.DiscountCalculateRequestV2;
+import com.loyalty.service_engine.application.dto.DiscountCalculateResponseV2;
+import com.loyalty.service_engine.domain.entity.TransactionLogEntity;
+import com.loyalty.service_engine.domain.repository.TransactionLogRepository;
+import com.loyalty.service_engine.infrastructure.exception.DiscountCalculationException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Servicio para escribir auditoría de cálculos de descuentos en transaction_logs.
+ * 
+ * Registra:
+ * - Subtotal, descuentos (calculado vs aplicado), monto final
+ * - Flag de capping y razón
+ * - Reglas aplicadas en JSONB
+ * - Métricas del cliente sin PII
+ * - Tier de clasificación
+ * - Timestamps de cálculo y expiración (7 días)
+ * 
+ * Garantiza:
+ * - external_order_id único por ecommerce (evita duplicados)
+ * - Integridad financiera: final_amount = subtotal - discount_applied
+ * - Sin datos personales (PII) en logs
+ */
+@Service
+<span class="fc" id="L38">@Slf4j</span>
+@RequiredArgsConstructor
+public class TransactionLogWriter {
+
+    private final TransactionLogRepository transactionLogRepository;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * Escribe registro de cálculo de descuentos
+     * 
+     * @param request datos de entrada del cálculo
+     * @param response respuesta con resultados
+     * @return UUID del registro creado
+     * @throws DiscountCalculationException si hay error al escribir
+     */
+    @Transactional
+    public UUID writeLog(
+        DiscountCalculateRequestV2 request,
+        DiscountCalculateResponseV2 response
+    ) {
+        try {
+            // Validar que external_order_id no existe (evitar duplicados)
+<span class="fc bfc" id="L60" title="All 2 branches covered.">            if (transactionLogRepository.existsByEcommerceIdAndExternalOrderId(</span>
+<span class="fc" id="L61">                request.ecommerceId(), request.externalOrderId())) {</span>
+<span class="fc" id="L62">                throw new DiscountCalculationException(</span>
+<span class="fc" id="L63">                    &quot;Duplicate external_order_id: &quot; + request.externalOrderId()</span>
+                );
+            }
+
+            // Validar integridad financiera
+<span class="fc" id="L68">            validateFinancialIntegrity(response);</span>
+
+            // Serializar reglas aplicadas
+<span class="fc" id="L71">            Object appliedRulesJson = serializeAppliedRules(response.appliedRules());</span>
+
+            // Serializar métricas del cliente (sin PII)
+<span class="fc" id="L74">            Object clientMetricsJson = serializeClientMetrics(request);</span>
+
+            // Construir entidad
+<span class="fc" id="L77">            TransactionLogEntity logEntity = TransactionLogEntity.builder()</span>
+<span class="fc" id="L78">                .ecommerceId(request.ecommerceId())</span>
+<span class="fc" id="L79">                .externalOrderId(request.externalOrderId())</span>
+<span class="fc" id="L80">                .subtotalAmount(response.subtotalAmount())</span>
+<span class="fc" id="L81">                .discountCalculated(response.discountCalculated())</span>
+<span class="fc" id="L82">                .discountApplied(response.discountApplied())</span>
+<span class="fc" id="L83">                .finalAmount(response.finalAmount())</span>
+<span class="fc" id="L84">                .wasCapped(response.wasCapped())</span>
+<span class="fc" id="L85">                .capReason(response.capReason())</span>
+<span class="fc" id="L86">                .appliedRulesJson(objectMapper.convertValue(appliedRulesJson, com.fasterxml.jackson.databind.JsonNode.class))</span>
+<span class="fc" id="L87">                .customerTier(response.customerTier())</span>
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">                .clientMetricsJson(clientMetricsJson != null ? objectMapper.convertValue(clientMetricsJson, com.fasterxml.jackson.databind.JsonNode.class) : null)</span>
+<span class="fc" id="L89">                .status(&quot;SUCCESS&quot;)</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">                .calculatedAt(response.calculatedAt() != null ? response.calculatedAt() : Instant.now())</span>
+<span class="fc" id="L91">                .createdAt(Instant.now())</span>
+<span class="fc" id="L92">                .expiresAt(Instant.now().plusSeconds(7 * 86400))  // 7 días</span>
+<span class="fc" id="L93">                .build();</span>
+
+            // Guardar
+<span class="fc" id="L96">            TransactionLogEntity saved = transactionLogRepository.save(logEntity);</span>
+            
+<span class="fc" id="L98">            log.info(&quot;Transaction log written: ecommerce={}, external_order_id={}, transaction_id={}&quot;, </span>
+<span class="fc" id="L99">                request.ecommerceId(), request.externalOrderId(), saved.getId());</span>
+
+<span class="fc" id="L101">            return saved.getId();</span>
+
+<span class="fc" id="L103">        } catch (Exception e) {</span>
+<span class="fc" id="L104">            log.error(&quot;Error writing transaction log: ecommerce={}, external_order_id={}, error={}&quot;,</span>
+<span class="fc" id="L105">                request.ecommerceId(), request.externalOrderId(), e.getMessage(), e);</span>
+<span class="fc" id="L106">            throw new DiscountCalculationException(&quot;Failed to write transaction log: &quot; + e.getMessage(), e);</span>
+        }
+    }
+
+    /**
+     * Valida integridad de ecuación financiera
+     */
+    private void validateFinancialIntegrity(DiscountCalculateResponseV2 response) {
+        // final_amount debe ser = subtotal - discount_applied
+        // Con tolerancia de redondeo (0.05)
+<span class="fc" id="L116">        var expected = response.subtotalAmount().subtract(response.discountApplied());</span>
+<span class="fc" id="L117">        var tolerance = java.math.BigDecimal.valueOf(0.05);</span>
+        
+<span class="fc bfc" id="L119" title="All 2 branches covered.">        if (response.finalAmount().subtract(expected).abs().compareTo(tolerance) &gt; 0) {</span>
+<span class="fc" id="L120">            throw new DiscountCalculationException(</span>
+<span class="fc" id="L121">                String.format(</span>
+                    &quot;Financial integrity error: final_amount=%s, expected=%s&quot;,
+<span class="fc" id="L123">                    response.finalAmount(), expected</span>
+                )
+            );
+        }
+<span class="fc" id="L127">    }</span>
+
+    /**
+     * Serializa lista de reglas aplicadas a estructura JSONB
+     */
+    private Object serializeAppliedRules(List&lt;AppliedRuleDetail&gt; rules) {
+<span class="fc bfc" id="L133" title="All 4 branches covered.">        if (rules == null || rules.isEmpty()) {</span>
+<span class="fc" id="L134">            return List.of();</span>
+        }
+
+<span class="fc" id="L137">        return rules.stream()</span>
+<span class="fc" id="L138">            .map(rule -&gt; {</span>
+<span class="fc" id="L139">                Map&lt;String, Object&gt; map = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L140">                map.put(&quot;rule_id&quot;, rule.ruleId().toString());</span>
+<span class="fc" id="L141">                map.put(&quot;rule_name&quot;, rule.ruleName());</span>
+<span class="fc" id="L142">                map.put(&quot;discount_type_code&quot;, rule.discountTypeCode());</span>
+<span class="fc" id="L143">                map.put(&quot;discount_type&quot;, rule.discountType());</span>
+<span class="fc" id="L144">                map.put(&quot;applied_with&quot;, rule.appliedWith());</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">                map.put(&quot;discount_percentage&quot;, rule.discountPercentage() != null ? rule.discountPercentage().toPlainString() : &quot;0&quot;);</span>
+<span class="fc" id="L146">                map.put(&quot;discount_amount&quot;, rule.discountAmount().toPlainString());</span>
+<span class="fc" id="L147">                map.put(&quot;priority_level&quot;, rule.priorityLevel());</span>
+<span class="fc" id="L148">                return map;</span>
+            })
+<span class="fc" id="L150">            .toList();</span>
+    }
+
+    /**
+     * Serializa métricas del cliente sin datos personales (PII)
+     */
+    private Object serializeClientMetrics(DiscountCalculateRequestV2 request) {
+<span class="fc" id="L157">        return Map.of(</span>
+<span class="fc" id="L158">            &quot;total_spent&quot;, request.totalSpent(),</span>
+<span class="fc" id="L159">            &quot;order_count&quot;, request.orderCount(),</span>
+<span class="fc" id="L160">            &quot;membership_days&quot;, request.membershipDays()</span>
+            // Nota: customer_id, external_order_id no se incluyen por privacidad
+        );
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

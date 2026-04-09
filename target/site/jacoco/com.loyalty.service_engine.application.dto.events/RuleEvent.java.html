@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RuleEvent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.dto.events</a> &gt; <span class="el_source">RuleEvent.java</span></div><h1>RuleEvent.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.dto.events;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Generic unified event for all rule types (FIDELITY, SEASONAL, PRODUCT, CLASSIFICATION).
+ * Consumed by Engine Service RuleEventConsumer to sync engine_rules table.
+ *
+ * SPEC-010: Unifies CLASSIFICATION, PRODUCT, SEASONAL, FIDELITY rule events.
+ * Published by Admin Service RuleService on CREATE, UPDATE, DELETE operations.
+ */
+<span class="fc" id="L15">public record RuleEvent(</span>
+    String eventType,                      // &quot;RULE_CREATED&quot; | &quot;RULE_UPDATED&quot; | &quot;RULE_DELETED&quot;
+    UUID ruleId,                           // Rule ID (uuid from Admin)
+    UUID ecommerceId,                      // Tenant ID (multi-tenant isolation)
+    String name,                           // Rule display name
+    String description,                    // Rule description (nullable)
+    String discountTypeCode,               // &quot;FIDELITY&quot; | &quot;SEASONAL&quot; | &quot;PRODUCT&quot; | &quot;CLASSIFICATION&quot;
+    BigDecimal discountValue,              // Discount amount or percentage
+    Integer priorityLevel,                 // Evaluation order (1, 2, 3, ...)
+    Map&lt;String, Object&gt; logicConditions,   // Flexible JSONB: {start_date, end_date, product_type, min_value, ...}
+    Boolean isActive,                      // true = active, false = inactive
+    String appliedWith,                    // &quot;INDIVIDUAL&quot; | &quot;STACKED&quot; (optional, defaults to &quot;INDIVIDUAL&quot;)
+    Instant timestamp                      // UTC timestamp of event
+) {
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

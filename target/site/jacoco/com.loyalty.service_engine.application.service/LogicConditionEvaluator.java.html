@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LogicConditionEvaluator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.loyalty.service_engine.application.service</a> &gt; <span class="el_source">LogicConditionEvaluator.java</span></div><h1>LogicConditionEvaluator.java</h1><pre class="source lang-java linenums">package com.loyalty.service_engine.application.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.loyalty.service_engine.application.dto.DiscountCalculateRequestV2;
+import com.loyalty.service_engine.infrastructure.exception.RuleEvaluationException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Evaluador de criterios lógicos JSONB para reglas de descuento.
+ * 
+ * Soporta evaluación de:
+ * - Criterios numéricos: min_spent, max_spent, subtotal
+ * - Criterios enteros: min_order_count, min_membership_days
+ * - Criterios de array: categories (verificar membresía)
+ * - Criterios de tier: customer_tier
+ * - Lógica de evaluación combinada: AND/OR (simple)
+ * 
+ * Ejemplo JSONB:
+ * {
+ *   &quot;min_spent&quot;: { &quot;type&quot;: &quot;NUMERIC&quot;, &quot;value&quot;: 1000.00 },
+ *   &quot;min_order_count&quot;: { &quot;type&quot;: &quot;INTEGER&quot;, &quot;value&quot;: 5 },
+ *   &quot;categories&quot;: { &quot;type&quot;: &quot;ARRAY&quot;, &quot;values&quot;: [&quot;electronics&quot;, &quot;books&quot;] },
+ *   &quot;evaluation_logic&quot;: &quot;min_spent AND min_order_count&quot;
+ * }
+ */
+@Service
+<span class="fc" id="L36">@Slf4j</span>
+@RequiredArgsConstructor
+public class LogicConditionEvaluator {
+
+    private final ObjectMapper objectMapper;
+
+    /**
+     * Evalúa si un cliente y carrito cumplen con todas las condiciones de una regla
+     * 
+     * @param logicConditions estructura con criterios (puede ser Map o JsonNode)
+     * @param request datos del carrito y cliente
+     * @param subtotal monto subtotal
+     * @param customerTier tier de clasificación
+     * @return true si todas las condiciones se cumplen
+     */
+    public boolean evaluateCondition(
+        Object logicConditions,
+        DiscountCalculateRequestV2 request,
+        BigDecimal subtotal,
+        String customerTier
+    ) {
+        // Convertir Map a JsonNode si es necesario
+        JsonNode conditionsNode;
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (logicConditions instanceof Map) {</span>
+<span class="fc" id="L60">            conditionsNode = objectMapper.convertValue(logicConditions, JsonNode.class);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        } else if (logicConditions instanceof JsonNode) {</span>
+<span class="fc" id="L62">            conditionsNode = (JsonNode) logicConditions;</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        } else if (logicConditions == null) {</span>
+<span class="fc" id="L64">            conditionsNode = null;</span>
+        } else {
+<span class="fc" id="L66">            log.debug(&quot;Unknown logic_conditions type, applying rule to all&quot;);</span>
+<span class="fc" id="L67">            return true;</span>
+        }
+
+<span class="fc" id="L70">        return evaluateJsonNode(conditionsNode, request, subtotal, customerTier);</span>
+    }
+
+    /**
+     * Evalúa condiciones desde JsonNode
+     */
+    private boolean evaluateJsonNode(
+        JsonNode logicConditions,
+        DiscountCalculateRequestV2 request,
+        BigDecimal subtotal,
+        String customerTier
+    ) {
+<span class="fc bfc" id="L82" title="All 4 branches covered.">        if (logicConditions == null || logicConditions.isNull()) {</span>
+<span class="fc" id="L83">            log.debug(&quot;No logic_conditions provided, rule applies to all&quot;);</span>
+<span class="fc" id="L84">            return true;</span>
+        }
+
+        try {
+            // Evaluar cada criterio disponible
+<span class="fc" id="L89">            boolean minSpentOk = evaluateMinSpent(logicConditions, request.totalSpent());</span>
+<span class="fc" id="L90">            boolean maxSpentOk = evaluateMaxSpent(logicConditions, request.totalSpent());</span>
+<span class="fc" id="L91">            boolean minSubtotalOk = evaluateMinSubtotal(logicConditions, subtotal);</span>
+<span class="fc" id="L92">            boolean maxSubtotalOk = evaluateMaxSubtotal(logicConditions, subtotal);</span>
+<span class="fc" id="L93">            boolean minOrderCountOk = evaluateMinOrderCount(logicConditions, request.orderCount());</span>
+<span class="fc" id="L94">            boolean minMembershipDaysOk = evaluateMinMembershipDays(logicConditions, request.membershipDays());</span>
+<span class="fc" id="L95">            boolean categoriesOk = evaluateCategories(logicConditions, request);</span>
+<span class="fc" id="L96">            boolean tierOk = evaluateCustomerTier(logicConditions, customerTier);</span>
+
+            // Checks basadas en evaluation_logic o AND por defecto
+<span class="fc bfc" id="L99" title="All 2 branches covered.">            String evaluationLogic = logicConditions.has(&quot;evaluation_logic&quot;)</span>
+<span class="fc" id="L100">                ? logicConditions.get(&quot;evaluation_logic&quot;).asText(&quot;&quot;)</span>
+<span class="fc" id="L101">                : &quot;&quot;;</span>
+
+<span class="fc bfc" id="L103" title="All 2 branches covered.">            if (!evaluationLogic.isEmpty()) {</span>
+<span class="fc" id="L104">                return evaluateCustomLogic(evaluationLogic,</span>
+                    minSpentOk, maxSpentOk, minSubtotalOk, maxSubtotalOk,
+                    minOrderCountOk, minMembershipDaysOk, categoriesOk, tierOk);
+            } else {
+                // Por defecto: AND lógico - todos deben pasar
+<span class="fc bfc" id="L109" title="All 16 branches covered.">                return minSpentOk &amp;&amp; maxSpentOk &amp;&amp; minSubtotalOk &amp;&amp; maxSubtotalOk &amp;&amp;</span>
+                       minOrderCountOk &amp;&amp; minMembershipDaysOk &amp;&amp; categoriesOk &amp;&amp; tierOk;
+            }
+<span class="nc" id="L112">        } catch (Exception e) {</span>
+<span class="nc" id="L113">            log.error(&quot;Error evaluating rule conditions: {}&quot;, logicConditions, e);</span>
+<span class="nc" id="L114">            throw new RuleEvaluationException(&quot;Failed to evaluate rule conditions: &quot; + e.getMessage(), e);</span>
+        }
+    }
+
+    /**
+     * Evalúa criterio: min_spent (gasto histórico mínimo del cliente)
+     */
+    private boolean evaluateMinSpent(JsonNode logicConditions, BigDecimal totalSpent) {
+<span class="fc bfc" id="L122" title="All 4 branches covered.">        if (!logicConditions.has(&quot;min_spent&quot;) || logicConditions.get(&quot;min_spent&quot;).isNull()) {</span>
+<span class="fc" id="L123">            return true;</span>
+        }
+
+<span class="fc" id="L126">        BigDecimal minValue = new BigDecimal(logicConditions.get(&quot;min_spent&quot;).asText(&quot;0&quot;));</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        boolean result = totalSpent.compareTo(minValue) &gt;= 0;</span>
+<span class="fc" id="L128">        log.debug(&quot;min_spent check: totalSpent={} &gt;= minValue={} -&gt; {}&quot;, totalSpent, minValue, result);</span>
+<span class="fc" id="L129">        return result;</span>
+    }
+
+    /**
+     * Evalúa criterio: max_spent (gasto histórico máximo del cliente)
+     */
+    private boolean evaluateMaxSpent(JsonNode logicConditions, BigDecimal totalSpent) {
+<span class="fc bfc" id="L136" title="All 4 branches covered.">        if (!logicConditions.has(&quot;max_spent&quot;) || logicConditions.get(&quot;max_spent&quot;).isNull()) {</span>
+<span class="fc" id="L137">            return true;</span>
+        }
+
+<span class="fc" id="L140">        BigDecimal maxValue = new BigDecimal(logicConditions.get(&quot;max_spent&quot;).asText());</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">        boolean result = totalSpent.compareTo(maxValue) &lt;= 0;</span>
+<span class="fc" id="L142">        log.debug(&quot;max_spent check: totalSpent={} &lt;= maxValue={} -&gt; {}&quot;, totalSpent, maxValue, result);</span>
+<span class="fc" id="L143">        return result;</span>
+    }
+
+    /**
+     * Evalúa criterio: min_subtotal (monto mínimo del carrito actual)
+     */
+    private boolean evaluateMinSubtotal(JsonNode logicConditions, BigDecimal subtotal) {
+<span class="fc bfc" id="L150" title="All 4 branches covered.">        if (!logicConditions.has(&quot;min_subtotal&quot;) || logicConditions.get(&quot;min_subtotal&quot;).isNull()) {</span>
+<span class="fc" id="L151">            return true;</span>
+        }
+
+<span class="fc" id="L154">        BigDecimal minValue = new BigDecimal(logicConditions.get(&quot;min_subtotal&quot;).asText(&quot;0&quot;));</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        boolean result = subtotal.compareTo(minValue) &gt;= 0;</span>
+<span class="fc" id="L156">        log.debug(&quot;min_subtotal check: subtotal={} &gt;= minValue={} -&gt; {}&quot;, subtotal, minValue, result);</span>
+<span class="fc" id="L157">        return result;</span>
+    }
+
+    /**
+     * Evalúa criterio: max_subtotal (monto máximo del carrito actual)
+     */
+    private boolean evaluateMaxSubtotal(JsonNode logicConditions, BigDecimal subtotal) {
+<span class="fc bfc" id="L164" title="All 4 branches covered.">        if (!logicConditions.has(&quot;max_subtotal&quot;) || logicConditions.get(&quot;max_subtotal&quot;).isNull()) {</span>
+<span class="fc" id="L165">            return true;</span>
+        }
+
+<span class="fc" id="L168">        BigDecimal maxValue = new BigDecimal(logicConditions.get(&quot;max_subtotal&quot;).asText());</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">        boolean result = subtotal.compareTo(maxValue) &lt;= 0;</span>
+<span class="fc" id="L170">        log.debug(&quot;max_subtotal check: subtotal={} &lt;= maxValue={} -&gt; {}&quot;, subtotal, maxValue, result);</span>
+<span class="fc" id="L171">        return result;</span>
+    }
+
+    /**
+     * Evalúa criterio: min_order_count (cantidad mínima de órdenes históricas)
+     */
+    private boolean evaluateMinOrderCount(JsonNode logicConditions, Integer orderCount) {
+<span class="fc bfc" id="L178" title="All 4 branches covered.">        if (!logicConditions.has(&quot;min_order_count&quot;) || logicConditions.get(&quot;min_order_count&quot;).isNull()) {</span>
+<span class="fc" id="L179">            return true;</span>
+        }
+
+<span class="fc" id="L182">        Integer minValue = logicConditions.get(&quot;min_order_count&quot;).asInt(0);</span>
+<span class="fc bfc" id="L183" title="All 2 branches covered.">        boolean result = orderCount &gt;= minValue;</span>
+<span class="fc" id="L184">        log.debug(&quot;min_order_count check: orderCount={} &gt;= minValue={} -&gt; {}&quot;, orderCount, minValue, result);</span>
+<span class="fc" id="L185">        return result;</span>
+    }
+
+    /**
+     * Evalúa criterio: min_membership_days (días mínimos de membresía)
+     */
+    private boolean evaluateMinMembershipDays(JsonNode logicConditions, Integer membershipDays) {
+<span class="fc bfc" id="L192" title="All 4 branches covered.">        if (!logicConditions.has(&quot;min_membership_days&quot;) || logicConditions.get(&quot;min_membership_days&quot;).isNull()) {</span>
+<span class="fc" id="L193">            return true;</span>
+        }
+
+<span class="fc" id="L196">        Integer minValue = logicConditions.get(&quot;min_membership_days&quot;).asInt(0);</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        boolean result = membershipDays &gt;= minValue;</span>
+<span class="fc" id="L198">        log.debug(&quot;min_membership_days check: membershipDays={} &gt;= minValue={} -&gt; {}&quot;, membershipDays, minValue, result);</span>
+<span class="fc" id="L199">        return result;</span>
+    }
+
+    /**
+     * Evalúa criterio: categories (categorías de productos en carrito)
+     * Verifica que AL MENOS UN item in el carrito esté en las categorías permitidas
+     */
+    private boolean evaluateCategories(JsonNode logicConditions, DiscountCalculateRequestV2 request) {
+<span class="fc bfc" id="L207" title="All 4 branches covered.">        if (!logicConditions.has(&quot;categories&quot;) || logicConditions.get(&quot;categories&quot;).isNull()) {</span>
+<span class="fc" id="L208">            return true;</span>
+        }
+
+<span class="fc" id="L211">        ArrayNode allowedCategories = (ArrayNode) logicConditions.get(&quot;categories&quot;);</span>
+<span class="fc bfc" id="L212" title="All 2 branches covered.">        if (allowedCategories.isEmpty()) {</span>
+<span class="fc" id="L213">            return true;</span>
+        }
+
+<span class="fc" id="L216">        Set&lt;String&gt; allowed = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L217">        allowedCategories.forEach(cat -&gt; allowed.add(cat.asText()));</span>
+
+        // Verificar que al menos un item está en las categorías permitidas
+<span class="fc" id="L220">        boolean result = request.items().stream()</span>
+<span class="fc bfc" id="L221" title="All 4 branches covered.">            .filter(item -&gt; item.category() != null &amp;&amp; !item.category().isEmpty())</span>
+<span class="fc" id="L222">            .anyMatch(item -&gt; allowed.contains(item.category()));</span>
+
+<span class="fc" id="L224">        log.debug(&quot;categories check: allowedCategories={}, hasMatchingItem={}&quot;, allowed, result);</span>
+<span class="fc" id="L225">        return result;</span>
+    }
+
+    /**
+     * Evalúa criterio: customer_tier (tier de clasificación asignado al cliente)
+     */
+    private boolean evaluateCustomerTier(JsonNode logicConditions, String customerTier) {
+<span class="fc bfc" id="L232" title="All 4 branches covered.">        if (!logicConditions.has(&quot;customer_tier&quot;) || logicConditions.get(&quot;customer_tier&quot;).isNull()) {</span>
+<span class="fc" id="L233">            return true;</span>
+        }
+
+<span class="fc" id="L236">        String requiredTier = logicConditions.get(&quot;customer_tier&quot;).asText();</span>
+<span class="fc bfc" id="L237" title="All 4 branches covered.">        boolean result = customerTier != null &amp;&amp; customerTier.equalsIgnoreCase(requiredTier);</span>
+<span class="fc" id="L238">        log.debug(&quot;customer_tier check: customerTier={}, requiredTier={} -&gt; {}&quot;, customerTier, requiredTier, result);</span>
+<span class="fc" id="L239">        return result;</span>
+    }
+
+    /**
+     * Evalúa lógica de evaluación personalizada (AND, OR)
+     * 
+     * Soporta frases simples como: &quot;min_spent AND min_order_count OR customer_tier&quot;
+     * Evaluación left-to-right sin precedencia de operadores
+     */
+    private boolean evaluateCustomLogic(
+        String evaluationLogic,
+        boolean minSpent, boolean maxSpent,
+        boolean minSubtotal, boolean maxSubtotal,
+        boolean minOrderCount, boolean minMembershipDays,
+        boolean categories, boolean tier
+    ) {
+<span class="fc" id="L255">        log.debug(&quot;Evaluating custom logic: {}&quot;, evaluationLogic);</span>
+
+        // Mapeo de criterios disponibles
+<span class="fc" id="L258">        boolean[] results = new boolean[]{minSpent, maxSpent, minSubtotal, maxSubtotal,</span>
+                                         minOrderCount, minMembershipDays, categories, tier};
+<span class="fc" id="L260">        String[] criteriaNames = {&quot;min_spent&quot;, &quot;max_spent&quot;, &quot;min_subtotal&quot;, &quot;max_subtotal&quot;,</span>
+                                  &quot;min_order_count&quot;, &quot;min_membership_days&quot;, &quot;categories&quot;, &quot;customer_tier&quot;};
+
+        // Parser simple left-to-right de AND/OR
+<span class="fc" id="L264">        String normalized = evaluationLogic.toUpperCase().trim();</span>
+        
+        // Casos simples
+<span class="fc bfc" id="L267" title="All 2 branches covered.">        if (normalized.equals(&quot;AND&quot;)) {</span>
+<span class="pc bpc" id="L268" title="7 of 16 branches missed.">            return minSpent &amp;&amp; maxSpent &amp;&amp; minSubtotal &amp;&amp; maxSubtotal &amp;&amp;</span>
+                   minOrderCount &amp;&amp; minMembershipDays &amp;&amp; categories &amp;&amp; tier;
+        }
+<span class="fc bfc" id="L271" title="All 2 branches covered.">        if (normalized.equals(&quot;OR&quot;)) {</span>
+<span class="pc bpc" id="L272" title="7 of 16 branches missed.">            return minSpent || maxSpent || minSubtotal || maxSubtotal ||</span>
+                   minOrderCount || minMembershipDays || categories || tier;
+        }
+
+        // Por defecto: AND
+<span class="fc" id="L277">        log.warn(&quot;Unknown evaluation_logic, defaulting to AND: {}&quot;, evaluationLogic);</span>
+<span class="pc bpc" id="L278" title="8 of 16 branches missed.">        return minSpent &amp;&amp; maxSpent &amp;&amp; minSubtotal &amp;&amp; maxSubtotal &amp;&amp;</span>
+               minOrderCount &amp;&amp; minMembershipDays &amp;&amp; categories &amp;&amp; tier;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
